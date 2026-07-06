@@ -1,0 +1,85 @@
+---
+# yaml-language-server: $schema=../docs-resources/schemas/defs-schema.json
+
+$schema: "../docs-resources/schemas/defs-schema.json#"
+
+# Used to create normative rules for ssdtso.adoc file.
+# Tags refer to anchors in any adoc file for any ISA manual.
+
+chapter_name: Ssdtso (Dynamic Switching of TSO Memory Ordering)
+
+normative_rule_definitions:
+  # --- Control state: menvcfg/senvcfg/henvcfg.DTSO ---
+  - name: DTSO_mmode
+    summary: The DTSO bits never place M-mode in dynamic-TSO mode; Ssdtso does not control M-mode ordering.
+    tags: ["norm:DTSO_mmode"]
+
+  - name: DTSO_field
+    summary: Ssdtso adds the DTSO field at bit 8 of menvcfg, senvcfg, and henvcfg, controlling dynamic-TSO for lower privilege levels.
+    tags: ["norm:DTSO_field"]
+
+  - name: DTSO_control_scope
+    summary: A set DTSO bit places the privilege levels indicated in the control table into dynamic-TSO mode (menvcfg over S/HS,U,VS,VU; henvcfg over VS,VU; senvcfg over U when V=0 and VU when V=1).
+    tags: ["norm:DTSO_control_scope"]
+
+  - name: DTSO_reset_rvwmo
+    summary: On an implementation that implements Ssdtso but not Ztso (RVWMO-native), each DTSO bit resets to 0.
+    tags: ["norm:DTSO_reset_rvwmo"]
+
+  - name: DTSO_reset_rvtso
+    summary: On an implementation that implements both Ssdtso and Ztso (RVTSO-native), each DTSO bit resets to 1.
+    tags: ["norm:DTSO_reset_rvtso"]
+
+  - name: DTSO_warl
+    summary: Each DTSO bit is an independently readable/writable WARL field whose written value is returned on read-back.
+    tags: ["norm:DTSO_warl"]
+
+  - name: DTSO_ztso_ro
+    summary: On a Ztso implementation each DTSO bit is a WARL field whose only legal value is 1 and reads as 1.
+    tags: ["norm:DTSO_ztso_ro"]
+
+  - name: DTSO_effective_or
+    summary: The effective dynamic-TSO state of a privilege level is the logical OR of the DTSO bits that control that level.
+    tags: ["norm:DTSO_effective_or"]
+
+  - name: DTSO_access
+    summary: Access to the DTSO bits follows access to their containing envcfg CSR, as gated by the ENVCFG bit of mstateen0/hstateen0.
+    tags: ["norm:DTSO_access"]
+
+  # --- Interpretation of memory operations (the dynamic-TSO ordering floor) ---
+  - name: ssdtso_ld
+    summary: In dynamic-TSO mode every load (including LR) carries at least an acquire-RCpc annotation.
+    tags: ["norm:ssdtso_ld"]
+
+  - name: ssdtso_sd
+    summary: In dynamic-TSO mode every store (including SC) carries at least a release-RCpc annotation.
+    tags: ["norm:ssdtso_sd"]
+
+  - name: ssdtso_amo
+    summary: In dynamic-TSO mode every AMO carries at least both acquire-RCsc and release-RCsc annotations.
+    tags: ["norm:ssdtso_amo"]
+
+  - name: ssdtso_equiv_ztso
+    summary: The dynamic-TSO ordering floor is exactly the Ztso annotation assignment; it neither weakens nor strengthens it.
+    tags: ["norm:ssdtso_equiv_ztso"]
+
+  - name: ssdtso_floor_union
+    summary: The ordering imposed on an instruction is the union of its encoded annotation and the floor; it is never ordered more weakly than either.
+    tags: ["norm:ssdtso_floor_union"]
+
+  - name: ssdtso_main_mem
+    summary: The floor applies only to main-memory accesses; I/O accesses continue to follow their PMAs and explicit FENCE instructions.
+    tags: ["norm:ssdtso_main_mem"]
+
+  # --- Transition semantics ---
+  - name: ssdtso_transition_no_fence
+    summary: Neither an envcfg DTSO write nor a privilege-level change implies a memory fence.
+    tags: ["norm:ssdtso_transition_no_fence"]
+
+  - name: ssdtso_mode_per_level
+    summary: The mode applied to an instruction is the effective dynamic-TSO state of the privilege level at which it executes; no instruction may be observed to use the previously-effective weaker mode, including across an xRET that lowers privilege into a dynamic-TSO level.
+    tags: ["norm:ssdtso_mode_per_level"]
+
+  - name: ssdtso_program_order
+    summary: The annotation assignment follows program order even under speculative execution; every access retires with at least the annotations of the mode in effect at its program-order position.
+    tags: ["norm:ssdtso_program_order"]

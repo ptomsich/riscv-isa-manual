@@ -8,7 +8,7 @@ The Ssdtso extension adds a 'dynamic-TSO' mode of operation.
 It is intended for implementations whose native memory model is RVWMO; its coexistence with Ztso is specified in <<ssdtso-dependencies-and-incompatibilities>>.
 
 Software executing at a higher privilege level (refer to Section "Privilege Modes" of "The RISC-V Instruction Set Manual: Volume II: Privileged Architecture" for the applicable definition in the presence of the H extension) can enable dynamic-TSO for all lower privilege levels on a per-hart granularity.
-Ssdtso does not control the memory ordering of M-mode: the `DTSO` bits never place M-mode in dynamic-TSO mode.
+Ssdtso does not control the memory ordering of M-mode: [#norm:DTSO_mmode]#the `DTSO` bits never place M-mode in dynamic-TSO mode#.
 On an implementation that does not implement Ztso, M-mode therefore always executes under RVWMO.
 On an implementation that also implements Ztso — where RVTSO is always-on for the whole hart — M-mode executes under RVTSO regardless of Ssdtso.
 
@@ -88,13 +88,13 @@ The scheduling obligation this imposes on the operating system is stated in the 
 [[ssdtso-state-controlling-whether-dynamic-tso-is-enabled]]
 ==== State controlling whether dynamic-TSO is enabled
 
-The dynamic-TSO behaviour is controlled by bit 8 (`DTSO`) of `menvcfg`, `senvcfg`, and `henvcfg` for all lower privilege levels.
+[#norm:DTSO_field]#The dynamic-TSO behaviour is controlled by bit 8 (`DTSO`) of `menvcfg`, `senvcfg`, and `henvcfg` for all lower privilege levels.#
 Implementations providing Ssdtso initialize the `DTSO` bit according to their default memory mode:
 
-* implementations that implement only Ssdtso, and not Ztso, default to use RVWMO semantics natively: the bits controlling dynamic-TSO behaviour are initialized to 0 on reset
-* implementations that implement both Ssdtso and Ztso, default to use RVTSO semantics natively: the bits controlling dynamic-TSO behaviour are initialized to 1 on reset
+* [#norm:DTSO_reset_rvwmo]#implementations that implement only Ssdtso, and not Ztso, default to use RVWMO semantics natively: the bits controlling dynamic-TSO behaviour are initialized to 0 on reset#
+* [#norm:DTSO_reset_rvtso]#implementations that implement both Ssdtso and Ztso, default to use RVTSO semantics natively: the bits controlling dynamic-TSO behaviour are initialized to 1 on reset#
 
-If the `DTSO` bit in an `envcfg` CSR is set, the lower-privilege modes indicated in the following table operate in dynamic-TSO mode:
+[#norm:DTSO_control_scope]#If the `DTSO` bit in an `envcfg` CSR is set, the lower-privilege modes indicated in the following table operate in dynamic-TSO mode#:
 [cols="^3,^2,^1,^1,^1,^1,^1",stripes=even,options="header"]
 |===
 1+|`DTSO` bit |Virtualization state 5+|Controls dynamic-TSO in modes
@@ -105,24 +105,24 @@ If the `DTSO` bit in an `envcfg` CSR is set, the lower-privilege modes indicated
 |senvcfg|V=1|0|0|0|0|1
 |===
 
-Each `DTSO` bit is an independently readable and writable WARL field: writing one `envcfg.DTSO` does not affect the others, and the written value is returned on read-back.
-On an implementation that also implements Ztso — where RVTSO is always-on for the whole hart — each `DTSO` bit is instead a WARL field whose only legal value is 1: it reads as 1 regardless of the value written, so that it accurately reflects the always-active RVTSO mode.
-The _effective_ dynamic-TSO state of a privilege level is the logical OR of the `DTSO` bits that control that level in the table above — a level operates in dynamic-TSO mode whenever any of its controlling `envcfg.DTSO` bits is set.
+[#norm:DTSO_warl]#Each `DTSO` bit is an independently readable and writable WARL field: writing one `envcfg.DTSO` does not affect the others, and the written value is returned on read-back.#
+[#norm:DTSO_ztso_ro]#On an implementation that also implements Ztso — where RVTSO is always-on for the whole hart — each `DTSO` bit is instead a WARL field whose only legal value is 1: it reads as 1 regardless of the value written, so that it accurately reflects the always-active RVTSO mode.#
+[#norm:DTSO_effective_or]#The _effective_ dynamic-TSO state of a privilege level is the logical OR of the `DTSO` bits that control that level in the table above — a level operates in dynamic-TSO mode whenever any of its controlling `envcfg.DTSO` bits is set.#
 
 Consequently a more-privileged level that sets its `DTSO` bit forces dynamic-TSO on all the levels it controls (`menvcfg.DTSO` over S/HS, U, VS, and VU; `henvcfg.DTSO` over VS and VU), and clearing a less-privileged `DTSO` bit cannot disable dynamic-TSO for a level that a more-privileged bit has enabled — even though the cleared bit still reads back as written.
 
-Ssdtso adds no state-enable control of its own: access to the `DTSO` bits follows access to their containing `senvcfg`/`henvcfg` CSR, which is already governed by the ENVCFG bit of `mstateen0` (and, under the H extension, `hstateen0`), so that where a higher privilege level withholds `envcfg` access from a lower one, the `DTSO` bit is likewise inaccessible.
+Ssdtso adds no state-enable control of its own: [#norm:DTSO_access]#access to the `DTSO` bits follows access to their containing `senvcfg`/`henvcfg` CSR, which is already governed by the ENVCFG bit of `mstateen0` (and, under the H extension, `hstateen0`), so that where a higher privilege level withholds `envcfg` access from a lower one, the `DTSO` bit is likewise inaccessible.#
 
 [[ssdtso-interpretation-of-memory-operations-in-dynamic-tso]]
 ==== Interpretation of memory-operations in dynamic-TSO
 
 While executing instructions in dynamic-TSO mode, every memory instruction is interpreted as carrying at least the memory-ordering annotation that RVTSO assigns to its access class — the dynamic-TSO _ordering floor_:
 
-* every load (including `LR`) behaves as if it had at least an acquire-RCpc annotation;
-* every store (including `SC`) behaves as if it had at least a release-RCpc annotation;
-* every AMO behaves as if it had at least both acquire-RCsc and release-RCsc annotations.
+* [#norm:ssdtso_ld]#every load (including `LR`) behaves as if it had at least an acquire-RCpc annotation#;
+* [#norm:ssdtso_sd]#every store (including `SC`) behaves as if it had at least a release-RCpc annotation#;
+* [#norm:ssdtso_amo]#every AMO behaves as if it had at least both acquire-RCsc and release-RCsc annotations#.
 
-This is exactly the annotation assignment that the Ztso extension defines (see Section "Ztso Extension for Total Store Ordering" of "The RISC-V Instruction Set Manual: Volume I"); dynamic-TSO neither weakens nor strengthens it.
+[#norm:ssdtso_equiv_ztso]#This is exactly the annotation assignment that the Ztso extension defines (see Section "Ztso Extension for Total Store Ordering" of "The RISC-V Instruction Set Manual: Volume I"); dynamic-TSO neither weakens nor strengthens it.#
 
 [NOTE]
 ====
@@ -130,11 +130,11 @@ The floor does not raise an unannotated `LR`/`SC` sequence to the full ordering 
 Code ported from architectures whose atomic read-modify-writes are fully ordered obtains that ordering from the explicit RCsc annotations that the standard mappings place on the instructions (`amo<op>.aqrl`, or `lr.aq; ...; sc.aqrl`; see the Section "Code Porting and Mapping Guidelines" of "The RISC-V Instruction Set Manual: Volume I"), not from the dynamic-TSO floor.
 ====
 
-This floor applies whether or not the instruction is otherwise annotated.
-Where the instruction's encoding already carries an ordering annotation, the ordering imposed on the instruction is the union of that annotation and the floor; an instruction is never ordered more weakly than either.
+[#norm:ssdtso_floor_union]#This floor applies whether or not the instruction is otherwise annotated.
+Where the instruction's encoding already carries an ordering annotation, the ordering imposed on the instruction is the union of that annotation and the floor; an instruction is never ordered more weakly than either.#
 
-The floor applies only to accesses to main-memory regions, whose ordering is governed by RVWMO.
-Accesses to I/O regions are unaffected: their ordering continues to follow their Physical Memory Attributes (PMAs) and any explicit `FENCE` instructions, exactly as under RVWMO.
+[#norm:ssdtso_main_mem]#The floor applies only to accesses to main-memory regions, whose ordering is governed by RVWMO.
+Accesses to I/O regions are unaffected: their ordering continues to follow their Physical Memory Attributes (PMAs) and any explicit `FENCE` instructions, exactly as under RVWMO.#
 Ordering between a main-memory access performed under dynamic-TSO and an access to an I/O region therefore still requires an explicit `FENCE` carrying the appropriate I/O predecessor and successor bits.
 
 [NOTE]
@@ -153,21 +153,21 @@ A transition into or out of dynamic-TSO mode occurs either
 (a) explicitly, through a write to the controlling `menvcfg`, `senvcfg`, or `henvcfg` CSR, or
 (b) implicitly, through a change of privilege level (e.g., a trap or an `xRET` instruction) that selects a privilege level operating under a different mode.
 
-Neither form of transition implies a memory fence.
+[#norm:ssdtso_transition_no_fence]#Neither form of transition implies a memory fence.
 The write to the `envcfg` CSR that toggles the `DTSO` bit is an ordinary control-register write; it does not, by itself, order memory accesses that precede it in program order with respect to those that follow it.
-Likewise, a change of privilege level that causes a transition does not, by itself, impose any additional memory ordering beyond that already required by RVWMO.
+Likewise, a change of privilege level that causes a transition does not, by itself, impose any additional memory ordering beyond that already required by RVWMO.#
 
 A hart always observes its own prior stores, regardless of the ordering annotation under which those stores were performed.
 Consequently, no fence is required at a mode transition for the correctness of memory accesses performed by the transitioning hart itself.
 
 Because the effective dynamic-TSO state is monotone with privilege — a less-privileged level is controlled by a superset of the `DTSO` bits that control any more-privileged level, and so is always at least as strongly ordered — only a transfer of control to a _less_-privileged level can strengthen the mode in effect.
 A trap, which raises privilege, therefore never places an instruction under a stronger mode than the one already in effect and requires no special treatment.
-The mode applied to a memory instruction is the effective dynamic-TSO state of the privilege level at which that instruction executes: every instruction executed at a level operating in dynamic-TSO mode observes that level's mode, and no instruction executed there may be observed to use the previously-effective (weaker) mode — including the instructions reached by an `xRET` that lowers privilege into a dynamic-TSO level.
+[#norm:ssdtso_mode_per_level]#The mode applied to a memory instruction is the effective dynamic-TSO state of the privilege level at which that instruction executes: every instruction executed at a level operating in dynamic-TSO mode observes that level's mode, and no instruction executed there may be observed to use the previously-effective (weaker) mode — including the instructions reached by an `xRET` that lowers privilege into a dynamic-TSO level.#
 The `DTSO`-changing CSR write itself needs no special treatment, as it does not alter the mode in which the writing, more-privileged software executes.
 
 This requirement determines only which mode applies to each instruction; it is not a memory fence and imposes no memory ordering beyond that of the modes themselves.
 
-The annotations that dynamic-TSO assigns are enforced by the same architectural rules as encoded annotations, and their assignment follows program order under all circumstances: an implementation that executes instructions speculatively must ensure that every memory access retires with (at least) the annotations of the mode in effect at its program-order position, including accesses that were already in flight when a mode transition resolved.
+[#norm:ssdtso_program_order]#The annotations that dynamic-TSO assigns are enforced by the same architectural rules as encoded annotations, and their assignment follows program order under all circumstances: an implementation that executes instructions speculatively must ensure that every memory access retires with (at least) the annotations of the mode in effect at its program-order position, including accesses that were already in flight when a mode transition resolved.#
 
 [NOTE]
 ====
