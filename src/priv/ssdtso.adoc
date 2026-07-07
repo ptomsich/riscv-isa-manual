@@ -36,7 +36,7 @@ RVTSO (whether statically selected or dynamically enabled) makes the following a
 * All AMO operations behave as if they have both acquire-RCsc and release-RCsc annotations.
 
 Because every load carries acquire-RCpc and every store release-RCpc ordering, these annotations subsume the rules for preserved program order (as defined in Section "Preserved Program Order" of "The RISC-V Instruction Set Manual: Volume I"), other than those governing explicit synchronization.
-They do so while preserving the single relaxation that distinguishes RVTSO from sequential consistency: a store followed in program order by a load of a different address remains unordered, exactly as RCpc release/acquire pairs permit.
+They do so while preserving the single relaxation that distinguishes RVTSO from sequential consistency: if a store is followed in program order by a load of a different address, the two remain unordered, exactly as RCpc release/acquire pairs permit.
 
 [NOTE]
 ====
@@ -47,9 +47,11 @@ RVTSO, and hence dynamic-TSO, is therefore multi-copy atomic, which is what allo
 
 Any execution of a system in which some harts operate under dynamic-TSO is a valid RVWMO execution of the same system in which those harts' memory instructions carry the annotations listed above.
 Mixed-mode operation therefore introduces no behaviour that RVWMO does not already permit for the annotated program, and the behaviours a dynamic-TSO hart can exhibit are a subset of those RVWMO permits for the same instructions.
-Because the floor is identical to the Ztso annotation assignment, compiler mappings of language-level memory models that are correct under Ztso remain correct under dynamic-TSO, and the psABI's interoperability of the RVWMO and Ztso atomics mappings extends to processes designated for dynamic-TSO (see <<ssdtso-compatibility-with-rvwmo-binaries-and-libraries>>).
+Because the floor is identical to the Ztso annotation assignment, any compiler mapping of a language-level memory model that is correct under Ztso remains correct under dynamic-TSO.
+The psABI's interoperability of the RVWMO and Ztso atomics mappings likewise extends to processes designated for dynamic-TSO (see <<ssdtso-compatibility-with-rvwmo-binaries-and-libraries>>).
 
-For the interoperability between code (from different processes) concurrently executing under RVTSO and RVWMO rules (on separate harts), we can therefore assume correct interoperability without any special precautions if the processes use explicit synchronization primitives as required for their respective memory consistency models — for the processes executing under RVWMO semantics, the `FENCE`-based acquire/release sequences and RCsc-annotated atomics (`.aq`/`.rl`) prescribed by the mapping guidelines (see Section "Code Porting and Mapping Guidelines" of "The RISC-V Instruction Set Manual: Volume I").
+Processes executing concurrently on separate harts, some under RVTSO and some under RVWMO, therefore interoperate correctly without special precautions — provided each process uses the explicit synchronization that its own memory consistency model requires.
+For a process executing under RVWMO, that means the `FENCE`-based acquire/release sequences and RCsc-annotated atomics (`.aq`/`.rl`) prescribed by the mapping guidelines (see Section "Code Porting and Mapping Guidelines" of "The RISC-V Instruction Set Manual: Volume I").
 
 Ssdtso assumes that the privileged software controlling the dynamic-TSO behaviour is developed for RVWMO and will use such explicit synchronization — `FENCE` instructions and RCsc-annotated atomics — as required.
 
@@ -81,7 +83,7 @@ As above, no formal requirement is introduced and a uniformity mandate is delega
 
 [NOTE]
 ====
-On a system where only a subset of the harts implements Ssdtso, a thread of a designated process that executes on a hart without Ssdtso runs under RVWMO with its synchronization statically elided — a silent correctness failure.
+On a system where only a subset of the harts implements Ssdtso, a thread of a designated process that executes on a hart without Ssdtso runs under RVWMO with its synchronization omitted at compile time — a silent correctness failure.
 The scheduling obligation this imposes on the operating system is stated in the <<req-capable>>.
 ====
 
@@ -162,7 +164,9 @@ Consequently, no fence is required at a mode transition for the correctness of m
 
 Because the effective dynamic-TSO state is monotone with privilege — a less-privileged level is controlled by a superset of the `DTSO` bits that control any more-privileged level, and so is always at least as strongly ordered — only a transfer of control to a _less_-privileged level can strengthen the mode in effect.
 A trap, which raises privilege, therefore never places an instruction under a stronger mode than the one already in effect and requires no special treatment.
-[#norm:ssdtso_mode_per_level]#The mode applied to a memory instruction is the effective dynamic-TSO state of the privilege level at which that instruction executes: every instruction executed at a level operating in dynamic-TSO mode observes that level's mode, and no instruction executed there may be observed to use the previously-effective (weaker) mode — including the instructions reached by an `xRET` that lowers privilege into a dynamic-TSO level.#
+[#norm:ssdtso_mode_per_level]#The mode applied to a memory instruction is the effective dynamic-TSO state of the privilege level at which that instruction executes.
+Every instruction executed at a level that operates in dynamic-TSO mode observes that level's mode; no such instruction may be observed to use the previously-effective, weaker mode.
+This includes the instructions reached by an `xRET` that lowers privilege into a dynamic-TSO level.#
 The `DTSO`-changing CSR write itself needs no special treatment, as it does not alter the mode in which the writing, more-privileged software executes.
 
 This requirement determines only which mode applies to each instruction; it is not a memory fence and imposes no memory ordering beyond that of the modes themselves.
@@ -193,7 +197,6 @@ The common context-switch and early process-initialization paths require no such
 ====
 
 [[sw_considerations]]
-
 ==== Software considerations (informative)
 
 This section is informative from the perspective of hardware implementations: it adds no architectural requirements.
@@ -215,9 +218,9 @@ Operating systems may follow various implementation strategies to enable dynamic
 
 [NOTE]
 ====
-While the Ssdtso specification was written to support on-demand switching of individual harts into dynamic-TSO mode, it does not prescribe a specific strategy for how the operating system handles the presence of processes requiring RVTSO semantics.
+This specification supports on-demand switching of individual harts into dynamic-TSO mode, but does not prescribe a specific strategy for how the operating system handles the presence of processes requiring RVTSO semantics.
 
-However, the expectation of the specification architects is that an operating system would attempt to reduce the overall time that cores would spend in dynamic-TSO mode.
+An operating system is nonetheless expected to minimize the overall time that cores spend in dynamic-TSO mode.
 ====
 
 [[ssdtso-configurations-for-dynamic-tso]]
@@ -230,7 +233,7 @@ Four configurations are typical:
 . *Single-hart.* Dynamic-TSO is enabled on one hart, and a process requiring RVTSO is confined to that hart.
 This is the simplest configuration but requires that the process not migrate to a hart operating under RVWMO.
 
-. *Per-process, across all harts.* The operating system establishes dynamic-TSO on whichever hart is about to execute a thread of an RVTSO process, by writing `senvcfg` (respectively `henvcfg` for a virtualized guest) as part of the context switch.
+. *Per-process, across all harts.* The operating system establishes dynamic-TSO on whichever hart is about to execute a thread of an RVTSO process, by writing `senvcfg` (or `henvcfg` for a virtualized guest) as part of the context switch.
 The process then observes uniform RVTSO semantics regardless of which harts its threads occupy.
 
 . *Per-thread.* The operating system establishes dynamic-TSO only for those threads of a process that require it, by writing the controlling `envcfg` CSR at thread-switch time, so that threads of a single process deliberately operate in different modes.
@@ -267,7 +270,8 @@ When the mode of a hart other than the one performing the change is altered (for
 
 . [[req-migration,migration requirement]]*Thread migration.*
 Migration reduces to the <<req-establish>> combined with a cross-hart handoff.
-The destination hart establishes `DTSO` before resuming the thread — exactly as for any switch into an RVTSO process — so the migrated thread never runs under RVWMO; and the release (source) / acquire (destination) handoff already provided by run-queue locking makes the thread's prior stores, performed with release-RCpc semantics and multi-copy atomic, globally consistent at the point of handoff.
+The destination hart establishes `DTSO` before resuming the thread — exactly as for any switch into an RVTSO process — so the migrated thread never runs under RVWMO.
+The release/acquire handoff already provided by run-queue locking (release on the source hart, acquire on the destination) then makes the thread's prior stores globally consistent at the point of handoff; those stores were performed with release-RCpc semantics and are multi-copy atomic.
 
 . [[req-maintain,mode-maintenance requirement]]*The mode, once granted, must be maintained.*
 For software designated as requiring RVTSO, the effective dynamic-TSO state must be maintained for every instruction of that software, on every hart that executes it, until the software exits or itself requests a transition (which is then governed by the <<req-rendezvous>>).
@@ -288,20 +292,20 @@ Because this rendezvous is comparatively expensive, a process that will require 
 [[ssdtso-impact-on-thread-task-state]]
 ===== Impact on thread/task state
 
-For operating systems that use on-demand switching of individual harts, the thread/task structures will require an additional field to track the requirement to execute in dynamic-TSO mode.
+For operating systems that use on-demand switching of individual harts, each thread/task structure needs an additional field recording whether the thread must execute in dynamic-TSO mode.
 
 [[runtime_linker_support]]
 ===== Runtime linker support
 
 Support for shared objects requires runtime-linker support, which roughly follows this process:
 
-* The capability to support Ssdtso is detected via an OS specific discovery method (e.g., `riscv_hwprobe` with `RISCV_HWPROBE_EXT_SSDTSO` key on Linux).
-* The ELF flags on each resolved shared object are evaluated to determine if RVTSO is required.  In case that RVTSO is required, but neither Ztso nor Ssdtso are available, the runtime linker is expected to invoke appropriate error handling and reporting.
-* If a shared object that requires RVTSO is loaded into the process and Ssdtso is implemented, the runtime linker signals the OS to enter dynamic-TSO mode via an OS specific interface (e.g., on Linux: using a `prctl(...)` call).
+* The capability to support Ssdtso is detected via an OS-specific discovery method (e.g., `riscv_hwprobe` with `RISCV_HWPROBE_EXT_SSDTSO` key on Linux).
+* The ELF flags on each resolved shared object are evaluated to determine if RVTSO is required. If RVTSO is required but neither Ztso nor Ssdtso is available, the runtime linker is expected to invoke appropriate error handling and reporting.
+* If a shared object that requires RVTSO is loaded into the process and Ssdtso is implemented, the runtime linker signals the OS to enter dynamic-TSO mode via an OS-specific interface (e.g., on Linux: using a `prctl(...)` call).
 
 [NOTE]
 ====
-It is recommended to only signal the need to enter dynamic-TSO mode once per process to reduce the number of system calls in consideration of performance.
+It is recommended to only signal the need to enter dynamic-TSO mode once per process, to reduce the number of system calls, for performance.
 Given that entering dynamic-TSO is idempotent, no requirement exists to signal it more than once.
 
 Beyond the performance consideration, entering dynamic-TSO mode early — before the process becomes multi-threaded — avoids the need to synchronize the transition across the process's threads; see the requirements in <<entering_and_exiting>>.
