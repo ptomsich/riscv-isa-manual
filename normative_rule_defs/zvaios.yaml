@@ -1,0 +1,194 @@
+# yaml-language-server: $schema=../docs-resources/schemas/defs-schema.json
+
+$schema: "../docs-resources/schemas/defs-schema.json#"
+
+# Used to create normative rules for the zvaios.adoc file.
+# Tags refer to anchors in any adoc file for any ISA manual.
+
+chapter_name: Zvaios (Vector Extension for Atomic I/O Stores)
+
+normative_rule_definitions:
+  # --- Extension dependencies ---
+  - name: zvaios_depends
+    summary: Zvaios depends upon the V and Zicsr extensions.
+    tags: ["norm:zvaios_depends"]
+
+  # --- Enabling execution at lower privilege levels ---
+  - name: zvaios_aiose
+    summary: Execution below M-mode is governed by the AIOSE bit in menvcfg/senvcfg/henvcfg; when the controlling bit is clear an illegal-instruction (or virtual-instruction in VS/VU) exception is raised.
+    tags: ["norm:zvaios_aiose"]
+
+  - name: zvaios_aiose_reset
+    summary: Each AIOSE bit resets to 0 so Zvaios cannot execute below M-mode until enabled; Zvaios is always available in M-mode when implemented.
+    tags: ["norm:zvaios_aiose_reset"]
+
+  - name: zvaios_aiose_rdonly0
+    summary: AIOSE is read-only zero when Zvaios is not implemented, and henvcfg.AIOSE is read-only zero when menvcfg.AIOSE is zero.
+    tags: ["norm:zvaios_aiose_rdonly0"]
+
+  # --- Instruction family and encoding ---
+  - name: zvaios_encoding
+    summary: The four atomic I/O store instructions use the STORE-FP major opcode with mew=1, mop=01, vm=1, width=000, and the nf field selecting the width variant.
+    tags: ["norm:zvaios_encoding"]
+
+  - name: zvaios_encoding_rd
+    summary: The destination register rd is encoded in bits [24:20] (the rs2 field position of other store encodings); no second source operand is consumed from this field.
+    tags: ["norm:zvaios_encoding_rd"]
+
+  - name: zvaios_store_op
+    summary: A vs_n_io.v instruction reads the first n bits from the vector register group at vs3, inserts the submission context identifier, performs an I/O-atomic store to the address in rs1, and writes a completion status word to rd (discarded when rd is x0).
+    tags: ["norm:zvaios_store_op"]
+
+  - name: zvaios_whole_reg
+    summary: Source data is read with whole-register semantics independent of vtype and vl; the register group size is max(1, n/VLEN) and follows the whole-register store alignment rules.
+    tags: ["norm:zvaios_whole_reg"]
+
+  - name: zvaios_payload_init
+    summary: The full store width is transferred regardless of how much software initialized; software must initialize every transferred payload bit, and uninitialized bits carry stale vector-register contents off-chip.
+    tags: ["norm:zvaios_payload_init"]
+
+  - name: zvaios_vlen_availability
+    summary: An implementation is required to support every family member whose register group fits within 8 vector registers.
+    tags: ["norm:zvaios_vlen_availability"]
+
+  - name: zvaios_operation
+    summary: The operation of each instruction is defined by the pseudocode in the instruction-family section.
+    tags: ["norm:zvaios_operation"]
+
+  # --- Completion status word ---
+  - name: zvaios_status_word
+    summary: A Zvaios instruction writes an XLEN-bit completion status word to rd (or discards it when rd is x0) and does not retire until the status word is available and the atomicity guarantee is in place.
+    tags: ["norm:zvaios_status_word"]
+
+  - name: zvaios_status_vocab
+    summary: Status word value 0 indicates success, value 1 indicates retry, and values 2 and above are implementation-defined and must be documented.
+    tags: ["norm:zvaios_status_vocab", "norm:zvaios_status_success", "norm:zvaios_status_retry", "norm:zvaios_status_impl"]
+
+  - name: zvaios_status_source
+    summary: The mechanism by which the implementation obtains the status word is not architecturally defined; software must not assume any particular transaction, location, format, or protocol.
+    tags: ["norm:zvaios_status_source"]
+
+  - name: zvaios_status_binding
+    summary: The status word corresponds to the specific store issued by this instruction and is not influenced by other outstanding stores or other harts.
+    tags: ["norm:zvaios_status_binding"]
+
+  - name: zvaios_status_untrusted
+    summary: The completion status word is untrusted device-derived data; software must validate it before use, and its value and retry timing are potential channels on a shared target.
+    tags: ["norm:zvaios_status_untrusted"]
+
+  # --- Submission context identifier CSRs ---
+  - name: zvaios_senqid
+    summary: senqid is a supervisor-level read-write CSR holding the identifier value used in S-mode and U-mode; only the low 32 bits are architecturally defined.
+    tags: ["norm:zvaios_senqid"]
+
+  - name: zvaios_vsenqid
+    summary: When the Hypervisor extension is implemented, vsenqid shadows senqid when V=1.
+    tags: ["norm:zvaios_vsenqid"]
+
+  - name: zvaios_senqid_reset
+    summary: senqid resets to zero (the null identifier), which a conforming device should treat as invalid and reject.
+    tags: ["norm:zvaios_senqid_reset"]
+
+  - name: zvaios_establish_before_run
+    summary: senqid/vsenqid is per-context state; supervisor software must establish a context's identifier before that context executes any Zvaios instruction and update it on every context switch, so no context submits under a previously-scheduled context's identifier.
+    tags: ["norm:zvaios_establish_before_run"]
+
+  - name: zvaios_senqfmt
+    summary: senqfmt is a supervisor-level read-write CSR with length ([5:0]) and shift ([15:6]) fields describing the insertion format used in S-mode and U-mode.
+    tags: ["norm:zvaios_senqfmt"]
+
+  - name: zvaios_senqfmt_res0
+    summary: Bits [XLEN-1:16] of senqfmt are reserved and read as zero.
+    tags: ["norm:zvaios_senqfmt_res0"]
+
+  - name: zvaios_senqfmt_reset
+    summary: senqfmt and vsenqfmt reset to zero (length=0), so no insertion is performed until a format is configured.
+    tags: ["norm:zvaios_senqfmt_reset"]
+
+  - name: zvaios_vsenqfmt
+    summary: When the Hypervisor extension is implemented, vsenqfmt shadows senqfmt when V=1.
+    tags: ["norm:zvaios_vsenqfmt"]
+
+  - name: zvaios_id_sel
+    summary: Execution below M-mode uses senqid/senqfmt; M-mode performs no insertion (payload delivered unmodified) and has no identifier or format CSRs; the instruction has no operand to override the identifier value or insertion format.
+    tags: ["norm:zvaios_id_sel"]
+
+  - name: zvaios_smstateen
+    summary: When Smstateen is implemented, a single mstateen0 bit may gate S-mode-and-below access to both senqid and senqfmt, with corresponding hstateen0 gating for VS-mode.
+    tags: ["norm:zvaios_smstateen"]
+
+  - name: zvaios_smstateen_scope
+    summary: Smstateen gates explicit CSR accesses only, not the instruction's implicit CSR reads; execution is governed by AIOSE, so hiding the CSRs does not by itself prevent a context from submitting under an established identifier.
+    tags: ["norm:zvaios_smstateen_scope"]
+
+  # --- Payload insertion ---
+  - name: zvaios_payload_insert
+    summary: If length is non-zero, bits [shift+length-1:shift] of the store payload are replaced with bits [length-1:0] of the selected identifier value before the store is issued; all other payload bits are unchanged.
+    tags: ["norm:zvaios_payload_insert"]
+
+  - name: zvaios_payload_nop
+    summary: If length is zero, no insertion is performed and the payload is delivered unmodified; shift and the identifier value CSR are ignored.
+    tags: ["norm:zvaios_payload_nop"]
+
+  - name: zvaios_payload_bounds
+    summary: When length is non-zero and shift+length exceeds the store width, an illegal-instruction exception is raised and no store is performed.
+    tags: ["norm:zvaios_payload_bounds"]
+
+  - name: zvaios_length_reserved
+    summary: If length holds a reserved value (33 through 63), an illegal-instruction exception is raised and no store is performed.
+    tags: ["norm:zvaios_length_reserved"]
+
+  # --- Atomicity ---
+  - name: zvaios_io_atomic_def
+    summary: A Zvaios instruction performs an I/O-atomic store; the payload is conveyed to the target as a single indivisible bus transaction, with no other hart's store to the same address observable in between.
+    tags: ["norm:zvaios_io_atomic_def"]
+
+  - name: zvaios_io_atomic_allornothing
+    summary: Delivery is all-or-nothing with respect to faults as well as contention; a Zvaios instruction that raises any exception delivers no bytes of the payload.
+    tags: ["norm:zvaios_io_atomic_allornothing"]
+
+  - name: zvaios_io_atomic_mech
+    summary: The ISA does not prescribe the mechanism; only the externally-observable behavior must match the I/O-atomic definition.
+    tags: ["norm:zvaios_io_atomic_mech"]
+
+  - name: zvaios_sca_relation
+    summary: I/O-atomic delivery extends single-copy atomicity to external I/O targets; within the coherence domain a Zvaios store is observed as a single-copy-atomic store.
+    tags: ["norm:zvaios_sca_relation"]
+
+  - name: zvaios_observability
+    summary: The atomicity guarantee holds regardless of interconnect topology and applies to observations by other harts, the target device, and DMA agents.
+    tags: ["norm:zvaios_observability"]
+
+  # --- I/O classification and ordering ---
+  - name: zvaios_io_writes
+    summary: Zvaios instructions are classified as I/O writes for FENCE ordering purposes and respect the FIOM bit of menvcfg and henvcfg.
+    tags: ["norm:zvaios_io_writes"]
+
+  - name: zvaios_pma_required
+    summary: The target address must have PMAs permitting I/O writes of the specified width; otherwise an access-fault exception is raised.
+    tags: ["norm:zvaios_pma_required"]
+
+  # --- Exceptions ---
+  - name: zvaios_exceptions
+    summary: Zvaios instructions may raise illegal-instruction, store/AMO-address-misaligned, store/AMO-access-fault, and virtual-instruction exceptions in the stated precedence order.
+    tags: ["norm:zvaios_exceptions"]
+
+  - name: zvaios_exc_illegal
+    summary: Illegal instruction is raised when the extension is not implemented, the encoding is reserved, the AIOSE control for the current privilege level is clear, VLEN is too small for the requested width, or the format CSR is invalid for the store width.
+    tags: ["norm:zvaios_exc_illegal", "norm:zvaios_exc_notimpl", "norm:zvaios_exc_reserved", "norm:zvaios_exc_aiose", "norm:zvaios_exc_vlen", "norm:zvaios_exc_fmt"]
+
+  - name: zvaios_exc_misaligned
+    summary: Store/AMO address misaligned is raised if the target address is not naturally aligned to the store width.
+    tags: ["norm:zvaios_exc_misaligned"]
+
+  - name: zvaios_exc_fault
+    summary: Store/AMO access fault is raised on PMA or PMP violation.
+    tags: ["norm:zvaios_exc_fault"]
+
+  - name: zvaios_exc_virt
+    summary: Virtual instruction is raised in VS-mode or VU-mode when the corresponding hstateen bit is clear.
+    tags: ["norm:zvaios_exc_virt"]
+
+  - name: zvaios_exc_tval
+    summary: On any exception raised by a Zvaios instruction, mtval or stval contains the faulting I/O address from rs1.
+    tags: ["norm:zvaios_exc_tval"]
