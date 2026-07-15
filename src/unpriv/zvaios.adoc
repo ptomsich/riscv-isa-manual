@@ -1,0 +1,894 @@
+// This chapter is the integration of the standalone Zvaios Fast-Track
+// proposal into the ISA manual.
+[[ext:zvaios]]
+=== ext:zvaios[] Vector Extension for Atomic I/O Stores, Version 0.1
+
+The ext:zvaios[] extension (Vector Atomic I/O Store) provides a family
+of instructions for atomic wide stores from vector registers to I/O
+addresses, together with a supervisor-controlled submission context
+identifier that is automatically inserted into the store payload. The
+extension enables efficient submission of descriptors to hardware
+accelerators, device work queues, and other I/O endpoints that require
+the entire descriptor to arrive as a single, indivisible bus
+transaction.
+
+The extension comprises a family of four instructions
+(insn:vs128io.v[], insn:vs256io.v[], insn:vs512io.v[],
+insn:vs1024io.v[]) that differ only in the width of the payload
+transferred. Each instruction writes an implementation-defined
+completion status word to a destination register, or discards the
+status word when the destination register is `x0`.
+
+NOTE: This extension is in *Draft* status and has not been ratified.
+The instruction encodings shown in this chapter are provisional,
+pending codepoint allocation, and the CSR addresses are unassigned;
+both are subject to change.
+
+[NOTE]
+====
+The ext:zvaios[] extension defines a new atomicity concept ---
+_I/O-atomic delivery_ --- that extends the memory model's single-copy
+atomicity guarantee to I/O targets. This concept is self-contained
+within this chapter until and unless the RISC-V memory model (RVWMO)
+is extended to formalize I/O operations generally.
+====
+
+[#norm:zvaios_depends]#The ext:zvaios[] extension depends upon the
+ext:v[] and ext:zicsr[] extensions.#
+
+Access to the ext:zvaios[] CSRs may be gated by the ext:smstateen[]
+extension, as described in <<sec:zvaios-senqid>>.
+
+The security model of the extension, the threats it is exposed to, and
+the controls that mitigate them are described in
+<<sec:zvaios-security>>.
+
+[[sec:zvaios-enable]]
+==== Enabling Atomic I/O Stores
+
+A ext:zvaios[] instruction issues a wide, indivisible write to an I/O
+target from the privilege level that executes it, stamped with a
+supervisor-controlled identifier that the executing level cannot
+forge. Execution below M-mode is therefore disabled by default and
+must be explicitly enabled by more-privileged software.
+
+[#norm:zvaios_aiose]#Execution of a ext:zvaios[] instruction at a
+privilege level below M is governed by the `AIOSE` (Atomic I/O Store
+Enable) bit added to csr:menvcfg[], csr:senvcfg[], and csr:henvcfg[],
+with the same control scope over lower privilege levels as the other
+`envcfg` enable bits. When the `AIOSE` bit controlling the current
+privilege level is clear, executing a ext:zvaios[] instruction raises
+an illegal-instruction exception, or a virtual-instruction exception
+when execution is in VS-mode or VU-mode and the controlling
+csr:henvcfg[] bit is clear.#
+
+[#norm:zvaios_aiose_reset]#Each `AIOSE` bit resets to 0, so that
+ext:zvaios[] instructions cannot be executed at any privilege level
+below M until enabled. When the extension is implemented, ext:zvaios[]
+instructions are always available in M-mode.#
+
+[#norm:zvaios_aiose_rdonly0]#If the ext:zvaios[] extension is not
+implemented, `AIOSE` is read-only zero. For implementations with the
+Hypervisor extension, csr:henvcfg[] `AIOSE` is read-only zero when
+csr:menvcfg[] `AIOSE` is zero.#
+
+NOTE: The `AIOSE` bit follows the pattern of the csr:menvcfg[] enable
+bits `STCE` and `CDE`: a facility usable from a lower privilege level
+is disabled at reset and opted into through the corresponding `envcfg`
+CSR. This gives privileged software a single control with which to
+withhold the wide-store primitive from a context, independent of
+whether that context can reach the ext:zvaios[] CSRs.
+
+==== Atomic I/O Store Instruction Family
+
+The ext:zvaios[] extension defines four atomic I/O store instructions
+that differ only in the width of the payload transferred.
+[#norm:zvaios_encoding]#The instructions use the STORE-FP major opcode
+(`0x27`), share a common encoding structure with existing vector store
+instructions, and are distinguished from other vector stores by the
+combination `mew=1`, `mop=01`, `vm=1`, and `width=000`. The 3-bit `nf`
+field selects the width variant:#
+
+[cols="^1,^2,^2,^2,^1",options="header"]
+|===
+| `nf[2:0]` | Mnemonic     | Bit width | Bytes | Register group
+
+| `000`     | `vs128io.v`  | 128       | 16    | 1 register
+| `001`     | `vs256io.v`  | 256       | 32    | 2 registers
+| `011`     | `vs512io.v`  | 512       | 64    | 4 registers
+| `111`     | `vs1024io.v` | 1024      | 128   | 8 registers
+|===
+
+The `nf` encoding follows the same `nf+1 → group size` convention
+used by vector segmented store instructions, with the group size
+interpreted as the number of registers required to hold the
+full-width payload at `VLEN >= n` rather than the number of
+segments.
+
+include::images/wavedrom/vs-n-io-v.edn[]
+
+[#norm:zvaios_encoding_rd]#The destination register _rd_ is encoded in
+bits `[24:20]` of the instruction word, in the field position that
+carries `rs2` in other RISC-V store encodings. ext:zvaios[]
+instructions do not consume a second source operand from this field;
+the completion status word written to _rd_ is produced by the
+implementation as described in <<sec:zvaios-senqid>>.#
+
+[#norm:zvaios_store_op]#The `vs__n__io.v` instructions read the first
+_n_ bits from the vector register group starting at _vs3_, insert a
+supervisor-controlled submission context identifier into the payload
+as described in <<sec:zvaios-senqid>>, perform an I/O-atomic store of
+the resulting payload to the address in _rs1_, and write a completion
+status word to the destination register _rd_. When _rd_ is `x0`, the
+completion status word is discarded.#
+
+[#norm:zvaios_whole_reg]#The source data is read from the vector
+register file using whole-register semantics, independent of the
+current values of csr:vtype[] and csr:vl[]. The number of vector
+registers consumed is equal to `max(1, n / VLEN)`. The register group
+must be aligned such that the first register index is a multiple of
+the group size, following the same alignment rules as the
+`vs{1,2,4,8}r.v` whole vector register store instructions defined by
+the base vector specification.#
+
+[#norm:zvaios_payload_init]#A ext:zvaios[] instruction transfers the
+full width of the store from the vector register group regardless of
+how many payload bits software has initialized. Software must
+initialize every payload bit that is transferred; any uninitialized
+bit carries whatever value the source vector register last held.#
+
+NOTE: Because the source is read with whole-register semantics, payload
+bits that software leaves uninitialized are transmitted to the I/O
+target verbatim, including vector-register contents left by a
+previously-executing context. Where the vector register file is shared
+across security contexts and is not scrubbed on a context switch, an
+uninitialized payload can disclose another context's data to an
+external device. Software should zero or fully populate the payload
+registers before issuing the store; see <<sec:zvaios-security>>.
+
+[#norm:zvaios_vlen_availability]#An implementation is required to
+support every member of the instruction family for which the required
+register group fits within 8 vector registers.
+<<table:zvaios-vlen>> shows the availability of each instruction as a
+function of VLEN.#
+
+[[table:zvaios-vlen]]
+.ext:zvaios[] instruction availability by VLEN
+[cols="^1,^1,^1,^1,^1",options="header"]
+|===
+| VLEN | `vs128io.v` | `vs256io.v` | `vs512io.v` | `vs1024io.v`
+
+| 128  | 1 reg       | 2 regs      | 4 regs      | 8 regs
+| 256  | 1 reg       | 1 reg       | 2 regs      | 4 regs
+| 512  | 1 reg       | 1 reg       | 1 reg       | 2 regs
+| 1024 | 1 reg       | 1 reg       | 1 reg       | 1 reg
+|===
+
+[#norm:zvaios_operation]#The operation of each instruction is:#
+[source,text]
+----
+  let bytes   = n / 8
+  let nregs   = max(1, bytes * 8 / VLEN)
+  let data    = concat(V[vs3], V[vs3+1], ..., V[vs3+nregs-1])[0 : bytes*8-1]
+  let addr    = X[rs1]
+  if priv != M then {              // M-mode performs no insertion
+    let length  = senqfmt.length   // vsenqfmt when V=1
+    let shift   = senqfmt.shift    // vsenqfmt when V=1
+    let payload = senqid[31:0]     // vsenqid  when V=1
+    // Replace bits [shift+length-1 : shift] of data with payload[length-1:0]
+    if length != 0 then insert_field(data, payload, shift, length)
+  }
+  let status  = io_atomic_store(addr, data, bytes)
+  if rd != 0 then X[rd] = status
+----
+
+===== Completion Status Word
+
+[#norm:zvaios_status_word]#A ext:zvaios[] instruction writes a
+completion status word of XLEN bits to the destination register _rd_,
+or discards the status word when _rd_ is `x0`. The instruction does
+not retire until the status word is available in _rd_ (if captured)
+and the atomicity guarantee defined in <<sec:zvaios-atomicity>> is in
+place.#
+
+[#norm:zvaios_status_vocab]#The following encodings are architecturally
+reserved in the status word:#
+
+* [#norm:zvaios_status_success]#A value of 0 indicates _success_: the
+  implementation has completed the I/O-atomic store and is unable to
+  report any condition that would prevent the target from processing
+  the submission.#
+* [#norm:zvaios_status_retry]#A value of 1 indicates _retry_: the
+  implementation has determined that the target is temporarily unable
+  to accept the submission and the software should reissue the
+  instruction after an implementation-defined backoff.#
+* [#norm:zvaios_status_impl]#Values 2 and above are
+  implementation-defined. An implementation must document the
+  meaning of each value it produces.#
+
+[#norm:zvaios_status_source]#The mechanism by which the implementation
+obtains the status word is not architecturally defined. Software
+must not assume that any particular bus transaction, memory
+location, completion format, or interconnect protocol is involved in
+producing the status word.#
+
+[#norm:zvaios_status_binding]#The status word written to _rd_
+corresponds to the specific store issued by this instruction. An
+implementation must ensure that the status word is not influenced by
+any other outstanding store or by the activity of any other hart.#
+
+[#norm:zvaios_status_untrusted]#The completion status word is data
+produced by the implementation in response to the target and is not a
+trusted value. Software must validate the status word before using it
+to direct subsequent execution, and must not use it as an address,
+length, or other operand without checking it. On a target shared
+between security contexts, the status-word value and the timing of the
+_retry_ response are potential channels; see <<sec:zvaios-security>>.#
+
+[NOTE]
+====
+The deliberate underspecification of the status-word source allows
+implementations to choose from a wide range of mechanisms --- a
+completion-carrying non-posted write, a response-channel code on an
+on-chip interconnect, an implementation-private status path, or
+synthesized status from an error-tracking structure --- without any
+of these choices becoming architecturally visible to software.
+Software that wants a portable notion of "the submission was
+accepted" can rely on the architecturally-reserved encodings 0 and 1;
+software that wants device-specific information can interpret the
+implementation-defined values in cooperation with the implementation
+and the target device.
+
+Software that does not need completion feedback uses `rd = x0` and
+the instruction behaves as a fire-and-forget posted store, with the
+completion status word discarded after the atomicity guarantee is in
+place.
+
+The idiom of reading a device-specific status register at an offset
+from the submission portal after the store is fully supported using
+an ordinary load instruction, with a insn:fence[] between the store
+and the load if the device requires it. There is no architectural
+atomicity guarantee on the separation between the ext:zvaios[] store
+and a subsequent ordinary load; drivers that require any such
+guarantee must rely on the completion status word in _rd_ rather than
+on a follow-up load.
+====
+
+[[sec:zvaios-senqid]]
+==== Submission Context Identifier
+
+The ext:zvaios[] extension defines two families of CSRs: one holding a
+supervisor-controlled submission context identifier _value_, and one
+holding the supervisor-controlled _format_ describing where and how
+that value is inserted into the store payload. When a ext:zvaios[]
+instruction executes, the hardware reads the applicable pair of CSRs
+and replaces a supervisor-specified bit range of the store payload
+with the supervisor-specified value before the payload is delivered
+to the target.
+
+===== Identifier Value CSRs
+
+[#norm:zvaios_senqid]#The csr:senqid[] CSR is a supervisor-level
+read-write register of XLEN bits that holds the submission context
+identifier value used by ext:zvaios[] instructions executing in S-mode
+or U-mode. Only the low 32 bits of csr:senqid[] are architecturally
+defined; on RV64, bits [63:32] are reserved and read as zero.#
+
+[#norm:zvaios_vsenqid]#When the Hypervisor extension is implemented,
+the csr:vsenqid[] CSR is a virtual-supervisor read-write register that
+shadows csr:senqid[] when `V=1`, following the shadowing mechanism
+defined in <<hypervisor>>.#
+
+[#norm:zvaios_senqid_reset]#csr:senqid[] resets to zero. The value
+zero is the _null identifier_. A device that distinguishes submission
+contexts by the inserted identifier should treat the null identifier
+as invalid and reject the submission, so that a context whose
+identifier has not been established cannot submit under a usable
+identity.#
+
+[#norm:zvaios_establish_before_run]#The csr:senqid[] CSR (and
+csr:vsenqid[] under virtualization) is per-context state. Supervisor
+software must establish the incoming context's identifier before that
+context
+executes any ext:zvaios[] instruction, and must update it on every
+context switch, so that a context never submits under a
+previously-scheduled context's identifier.#
+
+===== Insertion Format CSRs
+
+[#norm:zvaios_senqfmt]#The csr:senqfmt[] CSR is a supervisor-level
+read-write register that describes the insertion format used by
+ext:zvaios[] instructions executing in S-mode or U-mode. It contains
+two fields:#
+
+[cols="^1,^2,^7",options="header"]
+|===
+| Bits    | Field    | Description
+
+| `[5:0]`   | `length` | Number of payload bits to replace. Valid values are 0 through 32. A value of 0 selects no insertion, as defined in <<sec:zvaios-payload>>. Values 33 through 63 are reserved.
+| `[15:6]`  | `shift`  | Bit offset within the store payload at which the replacement begins, counted from the least-significant bit (bit 0 of byte 0). Valid values are 0 through 1023, subject to the constraint `shift + length` &#8804; store width.
+|===
+
+[#norm:zvaios_senqfmt_res0]#Bits `[XLEN-1:16]` of csr:senqfmt[] are
+reserved and read as zero.#
+
+[#norm:zvaios_senqfmt_reset]#csr:senqfmt[] and csr:vsenqfmt[] reset to
+zero, i.e. with `length` = 0, so that no insertion is performed until a
+format is configured.#
+
+[#norm:zvaios_vsenqfmt]#When the Hypervisor extension is implemented,
+the csr:vsenqfmt[] CSR is a virtual-supervisor read-write register
+that shadows csr:senqfmt[] when `V=1`, following the shadowing
+mechanism defined in <<hypervisor>>.#
+
+The CSR address assignments and ext:smstateen[] bit positions are to
+be allocated in the privileged architecture. A summary of the
+required changes is provided in <<appendix:zvaios-priv>>.
+
+[NOTE]
+====
+The separation of value and format into two CSRs allows the supervisor
+to describe two independent pieces of state: the identifier associated
+with the current context (which changes on every context switch) and
+the descriptor layout of the target device (which changes only when
+the target device changes, and is typically fixed for the lifetime of
+a driver binding). In the common case, csr:senqfmt[] is written once
+at driver initialization time and csr:senqid[] is updated on every
+context switch.
+
+The 32-bit architectural width of the identifier value matches the
+width of existing hardware-injected context fields in comparable
+extensions (e.g. the 20-bit PASID field in PCIe SIOV and the 32-bit
+source of ARM `ACCDATA_EL1`), and accommodates both PASIDs and
+narrower device-defined context identifiers with a single CSR width
+across RV32 and RV64.
+====
+
+===== Identifier Selection
+
+[#norm:zvaios_id_sel]#A ext:zvaios[] instruction executing in a
+privilege mode below M uses `senqid[31:0]` as the submission context
+identifier value and csr:senqfmt[] as the insertion format. A
+ext:zvaios[] instruction executing in M-mode performs no insertion:
+its payload is delivered unmodified, exactly as if `length` were zero.
+The instruction has no operand for overriding either the identifier
+value or the insertion format; supervisor software that needs to
+submit on behalf of a different context saves, writes, and restores
+the applicable CSRs around the submission.#
+
+NOTE: The extension defines no machine-level identifier or format
+CSRs. M-mode is the most privileged level and is trusted to construct
+the entire payload, so it places any identifier a target requires into
+the payload directly, rather than through hardware insertion. A
+machine-level insertion mechanism would add two CSRs for no isolation
+benefit, since nothing constrains what M-mode may store.
+
+NOTE: The identifier value, insertion format, and enable applied to a
+ext:zvaios[] instruction are its committed architectural values at the
+instruction's program-order position. A ext:zvaios[] store has an I/O
+side effect and is not performed speculatively, so an implementation
+that reorders execution must not deliver a submission under a stale or
+more-privileged identifier around a privilege transition or a CSR
+write.
+
+[NOTE]
+====
+Earlier drafts of this extension defined a privilege-aware override
+of the identifier value via the `rs2` operand, allowing supervisor
+code to inject descriptors on behalf of other contexts without saving
+and restoring the identifier CSR. That mechanism has been removed:
+the set of use cases that benefit from it (VM live migration, device
+driver proxying on behalf of a non-current process, debug and test
+environments) occurs at frequencies where a CSR save/write/restore
+sequence is not performance-critical, and the mechanism's cost in
+encoding space, privilege-dependent operand semantics, and
+verification surface was not justified by its benefit. The encoding
+field formerly used for the `rs2` override is now used to identify
+the destination register _rd_ for the completion status word.
+====
+
+===== CSR Gating
+
+[#norm:zvaios_smstateen]#When the ext:smstateen[] extension is
+implemented, access to csr:senqid[] and csr:senqfmt[] from S-mode or
+below may be gated by a single csr:mstateen0[] bit that covers both
+CSRs. When the gating bit is clear, access to either csr:senqid[] or
+csr:senqfmt[] from the affected privilege level raises an
+illegal-instruction exception. Corresponding gating for VS-mode via
+csr:hstateen0[] applies when the Hypervisor extension is implemented.
+The specific bit assignment is to be allocated in <<smstateen>>.#
+
+[#norm:zvaios_smstateen_scope]#The ext:smstateen[] gating governs
+explicit accesses to csr:senqid[] and csr:senqfmt[], not the implicit
+reads a ext:zvaios[] instruction performs. Whether the instruction may
+execute is governed by the `AIOSE` control (<<sec:zvaios-enable>>);
+hiding the CSRs does not, by itself, prevent a context from submitting
+under an established identifier.#
+
+[[sec:zvaios-payload]]
+===== Payload Insertion
+
+[#norm:zvaios_payload_insert]#If the `length` field of the applicable
+format CSR is non-zero, the hardware, before the store is issued to
+the I/O system, replaces bits `[shift + length - 1 : shift]` of the
+store payload with bits `[length - 1 : 0]` of the identifier value
+selected as described in <<sec:zvaios-senqid>>. All other bits of the
+store payload are taken unchanged from the vector register group.#
+
+[#norm:zvaios_payload_nop]#If the `length` field of the applicable
+format CSR is zero, no insertion is performed; the store payload is
+delivered to the I/O system unmodified, exactly as read from the
+vector register group. The value of the `shift` field and the contents
+of the identifier value CSR are ignored in this case.#
+
+[NOTE]
+====
+With `length` = 0 the executing level controls every bit of the
+payload, including any bytes a device interprets as a submission
+identifier. This is appropriate when the executing level is trusted to
+choose the identifier (for example, M-mode, or a supervisor submitting
+on its own behalf), or when the target does not use the payload
+identifier for isolation. To prevent a less-privileged level from
+choosing its own identifier, the owning level configures a non-zero
+`length` that overwrites the identifier field; see
+<<sec:zvaios-security>>.
+====
+
+[#norm:zvaios_payload_bounds]#When `length` is non-zero, the sum
+`shift + length` must not exceed the width in bits of the store (128
+for insn:vs128io.v[], 256 for insn:vs256io.v[], 512 for
+insn:vs512io.v[], 1024 for insn:vs1024io.v[]). If the sum exceeds the
+store width, an illegal-instruction exception is raised and no store
+is performed.#
+
+[#norm:zvaios_length_reserved]#If the `length` field of the applicable
+format CSR holds a reserved value (33 through 63), an
+illegal-instruction exception is raised and no store is performed.#
+
+[[sec:zvaios-atomicity]]
+==== Atomicity
+
+===== I/O-Atomic Delivery
+
+[#norm:zvaios_io_atomic_def]#A ext:zvaios[] instruction performs an
+_I/O-atomic store_: the payload is guaranteed to be conveyed to the
+target address as a single, indivisible bus transaction. No store by
+another hart to the same target address may be observed by the target
+between the first and last byte of an I/O-atomic store.#
+
+[#norm:zvaios_io_atomic_allornothing]#Delivery is all-or-nothing with
+respect to faults as well as contention. A ext:zvaios[] instruction
+that raises any exception delivers no bytes of the payload to the
+target; a partial payload is never delivered.#
+
+[#norm:zvaios_io_atomic_mech]#The ISA does not prescribe how an
+implementation achieves this guarantee. Possible mechanisms include a
+wide interconnect data path, a write-combining buffer with an atomic
+flush, or a dedicated I/O store path. The requirement is only that the
+externally-observable behavior matches the definition above.#
+
+===== Relationship to Single-Copy Atomicity
+
+[#norm:zvaios_sca_relation]#I/O-atomic delivery extends the concept of
+single-copy atomicity, defined in <<memorymodel>>, from the coherence
+domain to external I/O targets. Within the coherence domain, a
+ext:zvaios[] store is observed by other harts as a single-copy-atomic
+store with respect to loads from the target address.#
+
+===== Observability
+
+[#norm:zvaios_observability]#The atomicity guarantee applies regardless
+of the interconnect topology between the hart and the target. The
+guarantee applies to stores observed by other harts, by the target
+device, and by DMA agents acting on behalf of other devices. An
+implementation must ensure that the guarantee holds whether the target
+is reached via a coherent interconnect, a non-coherent I/O
+interconnect, or a combination of the two.#
+
+[NOTE]
+====
+The I/O-atomic delivery concept is new to this extension. It is not
+defined by the RISC-V memory model (RVWMO), which explicitly does not
+formalize the interaction of the memory model with I/O memory. If and
+when RVWMO is extended to cover I/O operations, the definition in this
+section may be replaced by a reference to <<memorymodel>>.
+====
+
+==== I/O Classification and Ordering
+
+[#norm:zvaios_io_writes]#ext:zvaios[] instructions are classified as
+I/O writes for the purposes of ordering as defined by the insn:fence[]
+instruction (<<base>>). They are ordered with respect to other I/O
+writes by the `PO` and `SO` predecessor and successor bits of
+insn:fence[], and with respect to other memory writes according to the
+`FIOM` bit in csr:menvcfg[] (<<sec:menvcfg>>) and csr:henvcfg[].#
+
+[#norm:zvaios_pma_required]#The target address of a
+ext:zvaios[] instruction must have Physical Memory Attributes (<<pma>>) that permit
+I/O writes of the specified width. Access to an address lacking the
+required PMA attributes raises an access-fault exception.#
+
+[[sec:zvaios-exceptions]]
+==== Exceptions
+
+[#norm:zvaios_exceptions]#ext:zvaios[] instructions may raise the
+following exceptions, in the order of precedence listed below:#
+
+. [#norm:zvaios_exc_illegal]#_Illegal instruction_ is raised if:#
+.. [#norm:zvaios_exc_notimpl]#the ext:zvaios[] extension is not
+   implemented,#
+.. [#norm:zvaios_exc_reserved]#the encoding is reserved,#
+.. [#norm:zvaios_exc_aiose]#the `AIOSE` control for the current
+   privilege level is clear, except that a _virtual instruction_
+   exception is raised instead in the VS/VU-mode case defined in
+   <<sec:zvaios-enable>>,#
+.. [#norm:zvaios_exc_vlen]#the implementation's VLEN is too small to
+   accommodate the requested width (i.e. the required register group
+   would exceed 8 vector registers),#
+.. [#norm:zvaios_exc_fmt]#the `length` field of the applicable format
+   CSR holds a reserved value, or `shift + length` exceeds the width
+   of the store.#
+. [#norm:zvaios_exc_misaligned]#_Store/AMO address misaligned_ is
+  raised if the target address is not naturally aligned to the store
+  width.#
+. [#norm:zvaios_exc_fault]#_Store/AMO access fault_ is raised on PMA
+  or PMP violation.#
+. [#norm:zvaios_exc_virt]#_Virtual instruction_ is raised when
+  executing in VS-mode or VU-mode with the corresponding `hstateen`
+  bit clear.#
+
+[#norm:zvaios_exc_tval]#On any exception raised by a
+ext:zvaios[] instruction, csr:mtval[] or csr:stval[] contains the faulting I/O
+address from _rs1_.#
+
+[[sec:zvaios-security]]
+==== Security Considerations
+
+This section is informative. It states the trust model the extension
+assumes and the obligations that model places on privileged software
+and on the platform.
+
+===== What insertion protects, and what it does not
+
+Isolation between mutually distrusting domains is not provided by the
+inserted identifier. Like any store to an I/O region, a ext:zvaios[]
+store is subject to the platform's address translation and protection
+on its target address --- PMAs, PMP, and any IOMMU --- and the
+extension adds no way to bypass them. Where a target consumes the
+inserted identifier, for example a device that tags its own downstream
+DMA with it, the platform's I/O mediation on the hardware requester
+remains the boundary between domains, exactly as it is when software
+writes the identifier into an ordinary descriptor. A device must not
+derive a submission's authority from the target address the executing
+level chose; authority comes from the mediated requester, and the
+address only selects a portal.
+
+What hardware insertion adds is a per-context identity that the
+executing level cannot forge. A requester-granularity mediator cannot
+tell apart two U-mode processes that share a hart. csr:senqid[],
+written by the supervisor and inserted by hardware, supplies that
+finer identity and stops one process from submitting under another's
+within a single supervisor domain. This is the property the extension
+exists to provide.
+
+===== Insertion is not a cross-domain boundary
+
+csr:vsenqid[] is a VS-mode read-write register, so a guest may write
+any value into it, and hardware inserts that value verbatim. The CPU
+does not namespace or translate it. A device or fabric must therefore
+not treat the inserted identifier as a globally-trusted identity. A
+platform that carries submissions across a trust boundary must mediate
+the identifier with host-controlled state: an IOMMU keyed on the
+hardware requester, or a host-programmed limit on the values a guest
+may write. This is the obligation that PASID-based I/O virtualization
+already meets by translating a guest PASID before it reaches the
+device. Cross-domain isolation must not depend on the inserted
+identifier alone.
+
+===== Fail-closed enable
+
+Execution below M-mode is disabled until privileged software sets the
+`AIOSE` control (<<sec:zvaios-enable>>), which resets to 0. A
+newly-reset or unconfigured hart therefore issues no submission at a
+lower privilege level, and a supervisor withdraws the facility from a
+context by clearing `AIOSE`, whether or not that context can reach the
+CSRs. With `length` = 0 the executing level controls the whole
+payload, so the owning level must configure a non-zero insertion for
+any target that relies on the identifier for isolation. An unconfigured
+format (`length` = 0) does not fault, so enabling `AIOSE` for a context
+and establishing its csr:senqfmt[] must be treated as one step: a
+context enabled while its format is still zero can supply its own
+identifier.
+
+===== Software obligations
+
+* *Context identity.* csr:senqid[] is per-context state. Supervisor
+  software establishes it before entering a context that uses
+  ext:zvaios[] and updates it on every context switch, so a context
+  never submits under a previously-scheduled context's identifier. A
+  missed update leaves the null identifier, which a conforming device
+  rejects, rather than a usable one.
+* *Payload contents.* The store ships the full width from the vector
+  register group, including bits software did not initialize, and the
+  vector registers are not scrubbed across a context switch. Software
+  must fully populate the payload before issuing the store, or it
+  leaks a previous context's data to the device.
+* *Completion status.* The status word in _rd_ is device-derived and
+  untrusted; software validates it before use.
+
+===== Availability
+
+Each instruction emits one bus transaction of up to 1024 bits. Where a
+lower-privilege level is granted ext:zvaios[], it can saturate a
+device queue or an interconnect path. A platform confines the facility
+with `AIOSE`, and accounts for or rate-limits the traffic where it is
+exposed more widely.
+
+==== Prior Art (Non-Normative)
+
+This section lists prior art supporting the mechanisms defined in the
+normative sections above. All external references are at least 20
+years old, consistent with the RISC-V Encumbered Information Policy.
+References to other chapters of this manual are not subject to the
+age cutoff.
+
+===== Wide Atomic Delivery to Device I/O
+
+* UltraSPARC block store (SPARC V9, 1995)
+* x86 write-combining buffer flush (Pentium Pro, 1995)
+
+_Mapping to ext:zvaios[]:_ The UltraSPARC V9 block store instructions
+transferred 64 bytes between the floating-point register file and
+memory as a single architectural operation, using an Address Space
+Identifier to distinguish I/O from ordinary memory. The x86
+write-combining buffer flush accumulates stores to a write-combining
+memory region and delivers them as a single burst transaction on the
+bus. Both established, by 1995, that a CPU can generate a wide,
+register-sourced, indivisible write to a device address without
+involving a DMA engine. ext:zvaios[] extends this established pattern
+to the RISC-V vector register file and makes the atomicity guarantee
+architectural rather than implementation-defined. The choice of
+vector registers as the data source (rather than memory operands or
+consecutive GPRs) follows the SPARC block-store precedent of reading
+a wide register group as a single payload.
+
+===== Whole-Register Vector Stores
+
+* The `vs{1,2,4,8}r.v` whole-register store instructions defined by
+  the base vector specification.
+
+_Mapping to ext:zvaios[]:_ The ratified base vector specification's
+whole-register store instructions already define the semantics of
+reading a fixed number of vector registers as raw bit storage,
+independent of csr:vtype[] and csr:vl[]. ext:zvaios[] inherits these
+semantics directly: the ext:zvaios[] instructions read the source
+vector register group using the same whole-register model, including
+the register-alignment constraint and the group-size convention. The
+base vector specification also establishes the `nf` field encoding
+for register group sizes 1, 2, 4, and 8, which ext:zvaios[] reuses as
+the width selector. Because the data path from vector register file
+to the store buffer is already specified for `vs{1,2,4,8}r.v`, any
+implementation already implementing the ext:v[] extension is required
+to have the infrastructure needed for ext:zvaios[]. This removes an
+entire class of potential objections to the extension: the
+data-movement mechanism is not new, only the atomicity guarantee at
+the target and the submission context identifier insertion are.
+
+===== Supervisor-Controlled Context Identifier Insertion
+
+* IBM System/360 Protection Key (1964)
+* Motorola MC68000 Function Codes FC0–FC2 (1979)
+* SPARC Address Space Identifiers (SPARC V7, 1986)
+* ARM TrustZone Non-Secure bit on AXI (AMBA3, 2003–2004)
+
+_Mapping to ext:zvaios[]:_ The architectural pattern of a
+supervisor-controlled identifier automatically attached to hardware
+transactions from less-privileged code has been in continuous use
+since the IBM System/360. In every listed example, the pattern is
+the same: privileged software writes a value to a register, hardware
+automatically uses that value to qualify subsequent operations from
+less-privileged code, and unprivileged code has no path to override
+the value. The System/360 Protection Key is checked against the
+storage key on every memory access. The MC68000 drives function
+codes FC0–FC2 on dedicated bus pins on every cycle, determined by
+the processor's privilege state. SPARC V7 appends the ASI to every
+memory access and restricts alternate-space instructions to
+supervisor mode. The TrustZone NS bit is driven on every AXI
+transaction and cannot be forged by non-secure code. The
+csr:senqid[] CSR applies this same pattern to wide I/O stores: the
+supervisor sets the identifier, the hardware inserts it into the
+payload, and no privilege level can override it via an instruction
+operand. None of this is novel architecture; it is the application of
+a 60-year-old pattern to a new destination (the I/O store payload
+rather than a bus tag).
+
+===== Configurable-Position Field Insertion During Outbound Transactions
+
+* Burroughs B5000 tagged memory (1961)
+* IBM System/38 capability tag bits (1978)
+* Symbolics 3600 tagged word format (1984)
+* Ethernet TCP/IP checksum offload in commercial NIC hardware (deployed by 1999)
+* IEEE 802.1Q VLAN tag insertion (IEEE Std 802.1Q-1998)
+* MPLS label stack push (IETF RFC 3031 and RFC 3032, 2001)
+* SCSI Block Commands-2 T10 Protection Information (SBC-2, T10/1417-D, 2004)
+* IEEE 802.1ad Provider Bridging (IEEE Std 802.1ad-2005)
+
+_Mapping to ext:zvaios[]:_ The csr:senqfmt[] mechanism combines two
+long-established architectural patterns. The first is
+hardware-managed insertion of a metadata field into an outbound
+write, which dates to tagged architectures of the early 1960s. The
+Burroughs B5000 wrote architectural tag bits into every memory word
+as a side effect of store execution, the IBM System/38 maintained
+capability tag bits updated by the store pipeline, and the Symbolics
+3600 and related Lisp machines wrote 8 bits of type tag per 36-bit
+word on each store. In every case, the hardware injected an
+architecturally-defined metadata field into the outbound write at a
+position and width fixed by the architecture. ext:zvaios[] retains
+the structural shape of these mechanisms (hardware inserts a
+supervisor-controlled value into an outbound write as the write is
+being issued) and parameterizes the position and width rather than
+fixing them.
+
+The second established pattern is programmable-position,
+programmable-width field insertion during outbound data transmission,
+which has been standard practice in networking hardware since the
+mid-1990s. IEEE 802.1Q-1998 defines hardware insertion of a 32-bit
+VLAN tag at a defined offset in outgoing Ethernet frames, with the
+tag value drawn from a per-port or per-descriptor control register.
+Commercial NICs routinely performed TCP/IP checksum offload by 1999,
+computing and writing a checksum of descriptor-specified width at a
+descriptor-specified offset into outgoing packets during DMA. MPLS
+label push, specified in RFC 3031 and RFC 3032 in 2001, defines
+hardware insertion of a variable-length label stack at a specified
+position in the forwarding pipeline. The T10 Protection Information
+mechanism standardised in SBC-2 in 2004 defines hardware insertion of
+an 8-byte protection field at programmable intervals into write data
+as it passes through a host bus adapter. IEEE 802.1ad-2005 extends
+VLAN insertion to stacked tags at multiple programmable positions. In
+all of these mechanisms, the hardware rewrites a specific,
+software-configured bit range of an outbound transaction with a
+hardware-controlled or software-configured value before the
+transaction is delivered to its destination.
+
+The csr:senqfmt[] CSR is the natural union of these two established
+patterns applied to the problem ext:zvaios[] addresses. The `length`
+field parameterizes the width of the inserted value, matching the
+practice established by T10 Protection Information (variable length),
+802.1ad (stacked variable length), and checksum offload (variable per
+protocol). The `shift` field parameterizes the position of the
+insertion, matching the practice established by packet-editing
+engines in every programmable NIC from the mid-1990s onward. The
+identifier value is drawn from a supervisor-controlled CSR, matching
+the pattern established by the SPARC ASI and earlier context
+mechanisms described in the preceding subsection. Each element is
+old; the ext:zvaios[] contribution is the packaging of these
+established elements into a single CPU instruction that binds the
+rewrite to the atomic delivery of the payload to an I/O target. The
+architectural novelty is the atomicity binding, not the rewrite
+mechanism: a programmable-offset, programmable-width insertion of a
+hardware- or supervisor-controlled value into an outbound write is
+the oldest and most widely-deployed form of structured metadata
+injection in general-purpose computing hardware.
+
+===== Status Return from I/O Instructions
+
+* IBM System/360 Start I/O (SIO) (1964)
+* IBM System/370 Start Subchannel (SSCH) (System/370-XA, 1983)
+* DEC PDP-11 IOT (1970)
+* CDC 6600 Peripheral Processor I/O instructions (1964)
+
+_Mapping to ext:zvaios[]:_ The pattern of an I/O-initiating
+instruction that completes with a status indication delivered into
+architectural register state, with the source of that status
+deliberately not visible to software, is as old as I/O architecture
+itself. The IBM System/360 Start I/O instruction issues a channel
+programme and returns a condition code in the PSW that distinguishes
+successful acceptance, channel busy, subchannel busy, and not
+operational, with the condition code populated from the channel's
+response to the initiation request. System/370 Start Subchannel
+follows the same pattern with a richer response vocabulary. The
+DEC PDP-11 IOT and the CDC 6600 peripheral processor instruction
+families both return condition indications derived from the
+device's response to an initiated operation. In every case, the
+source of the status indication --- channel logic, subchannel
+machinery, peripheral processor state, or device response --- is
+architecturally invisible; software sees only the resulting
+condition code in register state. ext:zvaios[] adopts exactly this
+pattern: the completion status word written to _rd_ is produced by
+the implementation from its response to the atomic I/O store, and
+the ISA does not specify where the status value originates. The
+ext:zvaios[] contribution is the application of a sixty-year-old I/O
+status-return pattern to a wide, register-sourced, vector-backed
+atomic store rather than to a channel programme.
+
+[[appendix:zvaios-priv]]
+==== Required Changes to the Privileged Architecture (Non-Normative)
+
+This section summarises the coordinated changes required in the
+privileged-architecture chapters of this manual to support the
+ext:zvaios[] extension. It is included in this chapter as a reviewer
+aid during fast-track review. Once ratified, each item becomes a
+normative change to the corresponding chapter, and this section can
+be removed.
+
+===== CSR Allocation
+
+New entries in the CSR allocation tables for:
+
+* csr:senqid[], csr:vsenqid[] — identifier value registers at
+  supervisor and virtual-supervisor privilege levels.
+* csr:senqfmt[], csr:vsenqfmt[] — insertion format registers at the
+  same two privilege levels, with the `length`, `shift` field layout
+  described in <<sec:zvaios-senqid>>, resetting to zero.
+
+CSR address assignments to be determined by the Privileged ISA editor.
+
+===== Envcfg Enable Bit Assignment
+
+A single new `AIOSE` bit in csr:menvcfg[], csr:senvcfg[], and
+csr:henvcfg[], controlling execution of ext:zvaios[] instructions at
+lower privilege levels as defined in <<sec:zvaios-enable>>. The bit
+resets to 0, is read-only zero when the extension is not implemented,
+and follows the read-only-zero relationship between csr:henvcfg[] and
+csr:menvcfg[] used by the other `envcfg` enable bits. Bit position to
+be determined by the Privileged ISA editor.
+
+===== IOMMU and Cross-Domain Identity Mediation
+
+Under virtualization, the identifier a guest writes to csr:vsenqid[] is
+inserted verbatim and is not host-namespaced (see
+<<sec:zvaios-security>>). A platform that carries ext:zvaios[]
+submissions across a trust boundary must mediate the inserted
+identifier with host-controlled state. It can do so either through a
+host-controlled structure such as an IOMMU, keyed on the hardware
+requester, or by constraining the range of values a guest may write.
+Specifying that mediation is a platform
+and IOMMU concern outside this chapter; it is noted here so that the
+requirement is not lost in the transition to the privileged
+architecture.
+
+===== Smstateen Bit Assignment
+
+A single new bit in csr:mstateen0[] controlling S-mode access to both
+csr:senqid[] and csr:senqfmt[]. When the bit is clear, access from
+S-mode or below to either CSR raises an illegal-instruction
+exception. A single bit is used because the two CSRs are functionally
+a unit: neither is useful without the other. Bit position to be
+determined by the ext:smstateen[] editor.
+
+===== Hstateen Bit Assignment
+
+A corresponding single bit in csr:hstateen0[] controlling VS-mode
+access to both csr:vsenqid[] and csr:vsenqfmt[]. When the bit is
+clear, access from VS-mode or VU-mode to either CSR raises a
+virtual-instruction exception. The csr:hstateen0[] bit is read-only
+zero when the csr:mstateen0[] bit is zero.
+
+===== Hypervisor Extension
+
+Addition of csr:vsenqid[] and csr:vsenqfmt[] to the list of Virtual
+Supervisor CSRs shadowed under the Hypervisor extension (<<hypervisor>>).
+When `V=1`, accesses from VS-mode to csr:senqid[] and csr:senqfmt[]
+are redirected to csr:vsenqid[] and csr:vsenqfmt[] respectively, using
+the standard shadowing mechanism.
+
+===== Physical Memory Attributes
+
+No new PMA attributes are required. The existing I/O PMA attributes
+are sufficient. A note may optionally be added to <<pma>> indicating
+that I/O regions targeted by ext:zvaios[] instructions must support
+the corresponding access widths.
+
+===== Memory Model
+
+No normative changes to the memory model chapters. The I/O-atomic
+delivery concept introduced in <<sec:zvaios-atomicity>> is
+self-contained within this chapter until and unless RVWMO is extended
+to formalize I/O operations generally.
+
+===== Other Chapters
+
+No changes to the base vector specification, the insn:fence[]
+instruction description, the ext:a[] extension, or any other existing
+chapter of this manual. The ext:zvaios[] chapter references these
+chapters but does not modify them.
