@@ -561,7 +561,14 @@ when RVWMO is extended to cover I/O operations, the definition in this
 section may be replaced by a reference to <<memorymodel>>.
 ====
 
+[[sec:zvaios-io]]
 ==== I/O Classification and Ordering
+
+[#norm:zvaios_io_only]#The target address of a
+ext:zvaios[] instruction must lie in an I/O region, as classified by
+the Physical Memory Attributes (<<pma>>). A ext:zvaios[] store to an
+address in a main-memory region raises a store/AMO access-fault
+exception, regardless of the other attributes of that region.#
 
 [#norm:zvaios_io_writes]#ext:zvaios[] instructions are classified as
 I/O writes for the purposes of ordering as defined by the insn:fence[]
@@ -570,10 +577,24 @@ writes by the `PO` and `SO` predecessor and successor bits of
 insn:fence[], and with respect to other memory writes according to the
 `FIOM` bit in csr:menvcfg[] (<<sec:menvcfg>>) and csr:henvcfg[].#
 
-[#norm:zvaios_pma_required]#The target address of a
-ext:zvaios[] instruction must have Physical Memory Attributes (<<pma>>) that permit
-I/O writes of the specified width. Access to an address lacking the
-required PMA attributes raises an access-fault exception.#
+[#norm:zvaios_pma_required]#The target address must additionally have
+Physical Memory Attributes that permit I/O writes of the specified
+width. If the PMAs do not permit the write, a store/AMO access-fault
+exception is raised.#
+
+[NOTE]
+====
+Main-memory targets are excluded deliberately. A store of up to 1024
+bits to coherent main memory would have to be defined as a single
+store memory operation under RVWMO, and on typical implementations
+it would require single-copy atomicity across multiple cache lines.
+Both are substantial obligations that lie outside the scope of this
+extension. The exclusion also keeps the I/O-atomic delivery concept
+self-contained in this chapter. A future extension may add a
+main-memory target class by defining such a store as a single memory
+operation in <<memorymodel>>; nothing in this chapter prevents that
+addition.
+====
 
 [[sec:zvaios-exceptions]]
 ==== Exceptions
@@ -601,8 +622,9 @@ following exceptions, in the order of precedence listed below:#
 . [#norm:zvaios_exc_misaligned]#_Store/AMO address misaligned_ is
   raised if the target address is not naturally aligned to the store
   width.#
-. [#norm:zvaios_exc_fault]#_Store/AMO access fault_ is raised on PMA
-  or PMP violation.#
+. [#norm:zvaios_exc_fault]#_Store/AMO access fault_ is raised if the
+  target address lies in a main-memory region (<<sec:zvaios-io>>) or
+  violates any other PMA or PMP requirement.#
 . [#norm:zvaios_exc_virt]#_Virtual instruction_ is raised when
   executing in VS-mode or VU-mode with the corresponding `hstateen`
   bit clear.#
@@ -953,9 +975,12 @@ the standard shadowing mechanism.
 ===== Physical Memory Attributes
 
 No new PMA attributes are required. The existing I/O PMA attributes
-are sufficient. A note may optionally be added to <<pma>> indicating
-that I/O regions targeted by ext:zvaios[] instructions must support
-the corresponding access widths.
+are sufficient, and the restriction of ext:zvaios[] targets to I/O
+regions (<<sec:zvaios-io>>) relies on the existing classification of
+the address space into main-memory and I/O regions. A note may
+optionally be added to <<pma>> indicating that I/O regions targeted
+by ext:zvaios[] instructions must support the corresponding access
+widths.
 
 ===== Memory Model
 

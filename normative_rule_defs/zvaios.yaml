@@ -176,12 +176,16 @@ normative_rule_definitions:
     tags: ["norm:zvaios_observability"]
 
   # --- I/O classification and ordering ---
+  - name: zvaios_io_only
+    summary: The target address must lie in an I/O region; a store to a main-memory region raises a store/AMO access-fault exception regardless of that region's other attributes.
+    tags: ["norm:zvaios_io_only"]
+
   - name: zvaios_io_writes
     summary: Zvaios instructions are classified as I/O writes for FENCE ordering purposes and respect the FIOM bit of menvcfg and henvcfg.
     tags: ["norm:zvaios_io_writes"]
 
   - name: zvaios_pma_required
-    summary: The target address must have PMAs permitting I/O writes of the specified width; otherwise an access-fault exception is raised.
+    summary: The target address must additionally have PMAs permitting I/O writes of the specified width; otherwise an access-fault exception is raised.
     tags: ["norm:zvaios_pma_required"]
 
   # --- Exceptions ---
@@ -198,7 +202,7 @@ normative_rule_definitions:
     tags: ["norm:zvaios_exc_misaligned"]
 
   - name: zvaios_exc_fault
-    summary: Store/AMO access fault is raised on PMA or PMP violation.
+    summary: Store/AMO access fault is raised if the target address lies in a main-memory region or violates any other PMA or PMP requirement.
     tags: ["norm:zvaios_exc_fault"]
 
   - name: zvaios_exc_virt
