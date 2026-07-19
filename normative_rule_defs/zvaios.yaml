@@ -10,8 +10,24 @@ chapter_name: Zvaios (Vector Extension for Atomic I/O Stores)
 normative_rule_definitions:
   # --- Extension dependencies ---
   - name: zvaios_depends
-    summary: Zvaios depends upon the V and Zicsr extensions.
+    summary: Zvaios depends upon Zicsr and a minimal set of vector register state and data-movement instructions, not upon the full V extension.
     tags: ["norm:zvaios_depends"]
+
+  - name: zvaios_min_state
+    summary: Required vector state is the 32 vector registers of VLEN bits (VLEN a power of two, >= 128), the vlenb and vstart CSRs, and the mstatus/sstatus VS field, with base-vector-specification semantics.
+    tags: ["norm:zvaios_min_state", "norm:zvaios_min_regs", "norm:zvaios_min_csrs", "norm:zvaios_min_vs"]
+
+  - name: zvaios_min_insns
+    summary: Required instructions are the whole-register loads vl{1,2,4,8}re8.v (to move payload data into vector registers) and the whole-register stores vs{1,2,4,8}r.v (so privileged software can save and restore vector registers on a context switch).
+    tags: ["norm:zvaios_min_insns", "norm:zvaios_min_loads", "norm:zvaios_min_stores"]
+
+  - name: zvaios_min_sufficient
+    summary: No other vector instruction or vector CSR is required; in particular no configuration-setting instructions or vtype/vl/vcsr CSRs, no computation on vector registers, no element-wise loads or stores, and no vector-to-scalar transfers.
+    tags: ["norm:zvaios_min_sufficient"]
+
+  - name: zvaios_v_compat
+    summary: Any implementation of V, or of a Zve* subset together with Zvl128b, satisfies the Zvaios dependency requirements without modification.
+    tags: ["norm:zvaios_v_compat"]
 
   # --- Enabling execution at lower privilege levels ---
   - name: zvaios_aiose
@@ -174,8 +190,8 @@ normative_rule_definitions:
     tags: ["norm:zvaios_exceptions"]
 
   - name: zvaios_exc_illegal
-    summary: Illegal instruction is raised when the extension is not implemented, the encoding is reserved, the AIOSE control for the current privilege level is clear, VLEN is too small for the requested width, or the format CSR is invalid for the store width.
-    tags: ["norm:zvaios_exc_illegal", "norm:zvaios_exc_notimpl", "norm:zvaios_exc_reserved", "norm:zvaios_exc_aiose", "norm:zvaios_exc_vlen", "norm:zvaios_exc_fmt"]
+    summary: Illegal instruction is raised when the extension is not implemented, mstatus.VS is Off, the encoding is reserved, the AIOSE control for the current privilege level is clear, VLEN is too small for the requested width, or the format CSR is invalid for the store width.
+    tags: ["norm:zvaios_exc_illegal", "norm:zvaios_exc_notimpl", "norm:zvaios_exc_vsoff", "norm:zvaios_exc_reserved", "norm:zvaios_exc_aiose", "norm:zvaios_exc_vlen", "norm:zvaios_exc_fmt"]
 
   - name: zvaios_exc_misaligned
     summary: Store/AMO address misaligned is raised if the target address is not naturally aligned to the store width.
