@@ -11,11 +11,11 @@ Format for Vector Atomic I/O Store Instructions under STORE-FP major opcode
 {reg: [
   {bits: 7, name: 0x27, attr: 'VS*IO.V'},
   {bits: 5, name: 'vs3', attr: 'store payload'},
-  {bits: 3, name: 'width', attr: '000'},
+  {bits: 3, name: 'width', attr: '111'},
   {bits: 5, name: 'rs1', attr: 'I/O address'},
   {bits: 5, name: 'rd', attr: 'completion status'},
   {bits: 1, name: 'vm', attr: '1'},
-  {bits: 2, name: 'mop', attr: '01'},
+  {bits: 2, name: 'mop', attr: '11'},
   {bits: 1, name: 'mew', attr: '1'},
   {bits: 3, name: 'nf', attr: 'width select'},
 ]}

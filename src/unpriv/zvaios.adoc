@@ -151,7 +151,7 @@ that differ only in the width of the payload transferred.
 [#norm:zvaios_encoding]#The instructions use the STORE-FP major opcode
 (`0x27`), share a common encoding structure with existing vector store
 instructions, and are distinguished from other vector stores by the
-combination `mew=1`, `mop=01`, `vm=1`, and `width=000`. The 3-bit `nf`
+combination `mew=1`, `mop=11`, `vm=1`, and `width=111`. The 3-bit `nf`
 field selects the width variant:#
 
 [cols="^1,^2,^2,^2,^1",options="header"]
@@ -170,6 +170,18 @@ size is the number of registers required to hold the full-width
 payload at `VLEN >= n`, rather than the number of segments.
 
 include::images/wavedrom/vs-n-io-v.edn[]
+
+[NOTE]
+====
+The `mew=1`, `width=111` encoding space of the STORE-FP and LOAD-FP
+major opcodes is shared with the tile load and store instructions of
+the proposed integrated matrix extension. Those instructions use
+`mop=00` and `mop=01`; ext:zvaios[] uses `mop=11`; `mop=10` is
+unassigned. This grouping leaves the other `mew=1` encodings free for
+a future vector extension with element widths of 128 bits and above.
+If codepoint allocation moves either proposal, both assignments
+should move together.
+====
 
 [#norm:zvaios_encoding_rd]#The destination register _rd_ is encoded in
 bits `[24:20]` of the instruction word, in the field position that

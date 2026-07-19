@@ -44,7 +44,7 @@ normative_rule_definitions:
 
   # --- Instruction family and encoding ---
   - name: zvaios_encoding
-    summary: The four atomic I/O store instructions use the STORE-FP major opcode with mew=1, mop=01, vm=1, width=000, and the nf field selecting the width variant.
+    summary: The four atomic I/O store instructions use the STORE-FP major opcode with mew=1, mop=11, vm=1, width=111, and the nf field selecting the width variant.
     tags: ["norm:zvaios_encoding"]
 
   - name: zvaios_encoding_rd
