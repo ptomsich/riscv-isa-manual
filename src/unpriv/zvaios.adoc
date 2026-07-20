@@ -5,13 +5,13 @@
 
 The ext:zvaios[] extension (Vector Atomic I/O Store) provides a family
 of instructions that perform wide, atomic stores from vector registers
-to I/O addresses. During each store, the hardware automatically
-inserts a supervisor-controlled submission context identifier into the
-store payload. The extension enables efficient submission of
-descriptors to hardware
-accelerators, device work queues, and other I/O endpoints that require
-the entire descriptor to arrive as a single, indivisible bus
-transaction.
+to I/O addresses. The extension enables efficient submission of
+descriptors to hardware accelerators, device work queues, and other
+I/O endpoints that require the entire descriptor to arrive as a
+single, indivisible bus transaction. To support multi-tenant use,
+hardware can additionally insert a supervisor-controlled submission
+context identifier into the store payload, so that a device shared by
+mutually distrusting contexts can attribute each submission.
 
 The extension consists of four instructions
 (insn:vs128io.v[], insn:vs256io.v[], insn:vs512io.v[],
@@ -675,7 +675,7 @@ U-mode processes that share a hart. csr:senqid[], written by the
 supervisor and inserted by hardware, supplies that finer-grained
 identity and prevents one process from submitting under another
 process's identity within a single supervisor domain. This is the
-property the extension exists to provide.
+property the insertion mechanism exists to provide.
 
 ===== Insertion is not a cross-domain boundary
 
@@ -732,7 +732,71 @@ saturate a device queue or an interconnect path. A platform confines
 the facility with `AIOSE`, and accounts for or rate-limits the
 traffic where the facility is exposed more widely.
 
+[[sec:zvaios-rationale]]
+==== Rationale (Non-Normative)
+
+This section is included only for the fast-track proposal. When the
+extension is integrated into the final specification, it is to be
+moved to the Historical Rationale appendix (<<app:rationale>>).
+
+A descriptor wider than XLEN cannot be handed to a device in a single
+store. Drivers therefore write descriptors into a memory ring and
+notify the device with a doorbell store, and the device then fetches
+the descriptor by DMA. Each submission costs a memory round trip, and
+the ring is shared state on which producers must synchronize. The
+ext:zvaios[] instructions remove both costs by delivering the whole
+descriptor to the device in one atomic store.
+
+We considered sourcing the payload from consecutive scalar registers,
+as the SPARC block store did from its floating-point register file,
+and from a dedicated staging buffer. On RV64, a 1024-bit payload
+would occupy 16 of the 31 scalar registers, which severely constrains
+register allocation; a staging buffer would add new architectural
+state that must be saved and restored on every context switch. The
+vector register file already provides both the state and the data
+path: whole-register loads and stores are defined by the base vector
+specification, payload widths of 128 to 1024 bits arise naturally
+from register grouping, and the dependency can be limited to the
+minimal subset of <<sec:zvaios-depends>>.
+
+The atomic store alone is complete for a single trusted submitter;
+the submission context identifier exists only so that multiple
+mutually distrusting contexts can share one device. We considered
+leaving the identifier entirely to software, which would simply write
+it into the payload. However, an
+identifier written by the executing context can be forged by that
+context: an I/O mediator that operates at the granularity of hardware
+requesters cannot distinguish two processes that share a hart, so one
+process could submit under another's identity. Hardware insertion of
+a supervisor-controlled CSR value closes this gap. The insertion
+position and width are configurable through csr:senqfmt[] rather than
+fixed, because descriptor layouts differ between devices, and a fixed
+field would have required per-device instruction variants.
+
+We considered making the store purely posted, with no completion
+feedback. However, a device queue can be full at submission time;
+without an architectural retry indication, software would have to
+poll a device status register, which reintroduces the round trip the
+extension removes. The completion status word in _rd_ provides the
+two portable outcomes, _success_ and _retry_, at negligible cost, and
+`rd = x0` preserves the posted behavior for software that does not
+need feedback.
+
+The extension is proposed on the fast track because its scope is
+narrow and self-contained: it composes mechanisms that have each been
+established for decades (see <<sec:zvaios-prior-art>>), modifies no
+existing chapter of this manual, depends only on a minimal subset of
+vector state and instructions, and confines its one new concept ---
+I/O-atomic delivery --- to this chapter. All external prior art
+predates the 20-year horizon of the RISC-V Encumbered Information
+Policy.
+
+[[sec:zvaios-prior-art]]
 ==== Prior Art (Non-Normative)
+
+This section is included only for the fast-track proposal, as review
+evidence. It is to be dropped when the extension is integrated into
+the final specification.
 
 This section lists prior art supporting the mechanisms defined in the
 normative sections above. All external references are at least 20
