@@ -59,6 +59,10 @@ normative_rule_definitions:
     summary: Source data is read with whole-register semantics independent of vtype and vl; the register group size is max(1, n/VLEN) and follows the whole-register store alignment rules.
     tags: ["norm:zvaios_whole_reg"]
 
+  - name: zvaios_vstart
+    summary: A Zvaios instruction is reserved if vstart is non-zero (raising an illegal-instruction exception with no store performed), and never writes vstart, since all-or-nothing delivery means the instruction is never resumed part-way through.
+    tags: ["norm:zvaios_vstart"]
+
   - name: zvaios_payload_init
     summary: The full store width is transferred regardless of how much software initialized; software must initialize every transferred payload bit, and uninitialized bits carry stale vector-register contents off-chip.
     tags: ["norm:zvaios_payload_init"]
@@ -79,6 +83,14 @@ normative_rule_definitions:
   - name: zvaios_status_vocab
     summary: Status word value 0 indicates success, value 1 indicates retry, and values 2 and above are implementation-defined and must be documented.
     tags: ["norm:zvaios_status_vocab", "norm:zvaios_status_success", "norm:zvaios_status_retry", "norm:zvaios_status_impl"]
+
+  - name: zvaios_status_retry_nothing
+    summary: A retry status indicates that no byte of the payload was delivered and the target's state is unchanged, so reissuing after retry submits the payload exactly once.
+    tags: ["norm:zvaios_status_retry_nothing"]
+
+  - name: zvaios_status_impl_delivery
+    summary: An implementation must document whether the payload was delivered for each implementation-defined status value; software must not reissue unless that value is documented as delivering no payload.
+    tags: ["norm:zvaios_status_impl_delivery"]
 
   - name: zvaios_status_source
     summary: The mechanism by which the implementation obtains the status word is not architecturally defined; software must not assume any particular transaction, location, format, or protocol.
@@ -155,13 +167,37 @@ normative_rule_definitions:
     tags: ["norm:zvaios_length_reserved"]
 
   # --- Atomicity ---
+  - name: zvaios_observer_def
+    summary: An observer of a Zvaios store is any agent that can read the target address or observe its contents, including other harts, the target device, and DMA agents or other devices on the interconnect.
+    tags: ["norm:zvaios_observer_def"]
+
   - name: zvaios_io_atomic_def
-    summary: A Zvaios instruction performs an I/O-atomic store; the payload is conveyed to the target as a single indivisible bus transaction, with no other hart's store to the same address observable in between.
+    summary: A Zvaios instruction performs an I/O-atomic store; no observer observes the payload in a partially complete state, and every observer observes either none or all of it.
     tags: ["norm:zvaios_io_atomic_def"]
+
+  - name: zvaios_io_atomic_conflict
+    summary: No write by another agent to an overlapping address range is interleaved with an I/O-atomic store; observers see the two writes in one order or the other, never a mixture.
+    tags: ["norm:zvaios_io_atomic_conflict"]
+
+  - name: zvaios_io_atomic_read
+    summary: A read of the target range performed concurrently with an I/O-atomic store returns either the state before or the state after the store, never a mixture.
+    tags: ["norm:zvaios_io_atomic_read"]
+
+  - name: zvaios_commit_point
+    summary: A store is committed for delivery when no subsequent hart action can prevent delivery; once committed the payload becomes observable by the target unless an event occurs that would also prevent delivery of an ordinary posted write. Commitment does not imply observation.
+    tags: ["norm:zvaios_commit_point"]
+
+  - name: zvaios_commit_noexc
+    summary: A Zvaios instruction raises no exception after its store is committed for delivery.
+    tags: ["norm:zvaios_commit_noexc"]
 
   - name: zvaios_io_atomic_allornothing
     summary: Delivery is all-or-nothing with respect to faults as well as contention; a Zvaios instruction that raises any exception delivers no bytes of the payload.
     tags: ["norm:zvaios_io_atomic_allornothing"]
+
+  - name: zvaios_io_atomic_once
+    summary: Each architectural execution delivers the payload at most once; before commitment the instruction may be abandoned with nothing delivered, after commitment it retires and is not re-executed, and re-execution never redelivers an already-delivered payload.
+    tags: ["norm:zvaios_io_atomic_once"]
 
   - name: zvaios_io_atomic_mech
     summary: The ISA does not prescribe the mechanism; only the externally-observable behavior must match the I/O-atomic definition.
@@ -170,6 +206,10 @@ normative_rule_definitions:
   - name: zvaios_sca_relation
     summary: I/O-atomic delivery extends single-copy atomicity to external I/O targets; within the coherence domain a Zvaios store is observed as a single-copy-atomic store.
     tags: ["norm:zvaios_sca_relation"]
+
+  - name: zvaios_single_memop
+    summary: A Zvaios instruction follows RVWMO at the instruction level like other vector memory instructions, and gives rise to no separate element memory operations; the payload is delivered as one indivisible unit.
+    tags: ["norm:zvaios_single_memop"]
 
   - name: zvaios_observability
     summary: The atomicity guarantee holds regardless of interconnect topology and applies to observations by other harts, the target device, and DMA agents.
@@ -194,21 +234,33 @@ normative_rule_definitions:
     tags: ["norm:zvaios_exceptions"]
 
   - name: zvaios_exc_illegal
-    summary: Illegal instruction is raised when the extension is not implemented, mstatus.VS is Off, the encoding is reserved, the AIOSE control for the current privilege level is clear, VLEN is too small for the requested width, or the format CSR is invalid for the store width.
-    tags: ["norm:zvaios_exc_illegal", "norm:zvaios_exc_notimpl", "norm:zvaios_exc_vsoff", "norm:zvaios_exc_reserved", "norm:zvaios_exc_aiose", "norm:zvaios_exc_vlen", "norm:zvaios_exc_fmt"]
+    summary: Illegal instruction is raised when the extension is not implemented, mstatus.VS is Off, the encoding is reserved, the AIOSE control for the current privilege level is clear, vstart is non-zero, VLEN is too small for the requested width, or the format CSR is invalid for the store width.
+    tags: ["norm:zvaios_exc_illegal", "norm:zvaios_exc_notimpl", "norm:zvaios_exc_vsoff", "norm:zvaios_exc_reserved", "norm:zvaios_exc_aiose", "norm:zvaios_exc_vstart", "norm:zvaios_exc_vlen", "norm:zvaios_exc_fmt"]
 
   - name: zvaios_exc_misaligned
     summary: Store/AMO address misaligned is raised if the target address is not naturally aligned to the store width.
     tags: ["norm:zvaios_exc_misaligned"]
 
+  - name: zvaios_exc_page
+    summary: Store/AMO page fault is raised if address translation is in effect and translation of the target address fails, as for any other store.
+    tags: ["norm:zvaios_exc_page"]
+
+  - name: zvaios_exc_gpage
+    summary: Store/AMO guest-page fault is raised under virtualization if second-stage translation of the target address fails, as for any other store.
+    tags: ["norm:zvaios_exc_gpage"]
+
   - name: zvaios_exc_fault
     summary: Store/AMO access fault is raised if the target address lies in a main-memory region or violates any other PMA or PMP requirement.
     tags: ["norm:zvaios_exc_fault"]
+
+  - name: zvaios_exc_nostore
+    summary: No exception raised by a Zvaios instruction delivers any part of the payload to the target.
+    tags: ["norm:zvaios_exc_nostore"]
 
   - name: zvaios_exc_virt
     summary: Virtual instruction is raised in VS-mode or VU-mode when the corresponding hstateen bit is clear.
     tags: ["norm:zvaios_exc_virt"]
 
   - name: zvaios_exc_tval
-    summary: On any exception raised by a Zvaios instruction, mtval or stval contains the faulting I/O address from rs1.
+    summary: On any exception, mtval or stval contains the faulting address from rs1 (virtual when translation is in effect, otherwise physical), and htval is written on a guest-page fault, as for any other store.
     tags: ["norm:zvaios_exc_tval"]

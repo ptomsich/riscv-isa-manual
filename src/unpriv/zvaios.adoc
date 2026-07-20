@@ -1,5 +1,3 @@
-// This chapter is the integration of the standalone Zvaios Fast-Track
-// proposal into the ISA manual.
 [[ext:zvaios]]
 === ext:zvaios[] Vector Extension for Atomic I/O Stores, Version 0.1
 
@@ -27,8 +25,8 @@ both are subject to change.
 
 [NOTE]
 ====
-The ext:zvaios[] extension defines a new atomicity concept ---
-_I/O-atomic delivery_ --- that extends the memory model's single-copy
+The ext:zvaios[] extension defines a new atomicity concept
+(_I/O-atomic delivery_) that extends the memory model's single-copy
 atomicity guarantee to I/O targets. This concept is defined entirely
 within this chapter; it remains so unless the RISC-V memory model
 (RVWMO) is later extended to formalize I/O operations in general.
@@ -55,8 +53,7 @@ provide the following architectural state, with the semantics defined
 by the base vector specification:#
 
 * [#norm:zvaios_min_regs]#the 32 vector registers `v0` through
-  `v31`, each VLEN bits wide, where VLEN is a power of two and
-  `VLEN >= 128`;#
+  `v31`, and `VLEN >= 128`;#
 * [#norm:zvaios_min_csrs]#the csr:vlenb[] and csr:vstart[] CSRs;
   and#
 * [#norm:zvaios_min_vs]#the `VS` vector context status field of
@@ -97,8 +94,8 @@ submits it. The only vector capabilities this requires are the
 register file itself, a way to fill it from memory, and a way for
 privileged software to save and restore it on a context switch.
 Restricting the dependency to this subset allows a small control or
-I/O core --- for example, a core whose only role is to submit
-descriptors to accelerators --- to implement ext:zvaios[] without
+I/O core (for example, a core whose only role is to submit
+descriptors to accelerators) to implement ext:zvaios[] without
 vector arithmetic data paths. The whole-register loads and stores
 operate independently of csr:vtype[] and csr:vl[], so the
 configuration-setting instructions and their CSRs are not needed.
@@ -144,6 +141,7 @@ is disabled at reset and must be enabled through the corresponding
 deny a context the use of the wide-store instructions, regardless of
 whether that context can access the ext:zvaios[] CSRs.
 
+[[sec:zvaios-insns]]
 ==== Atomic I/O Store Instruction Family
 
 The ext:zvaios[] extension defines four atomic I/O store instructions
@@ -208,6 +206,26 @@ same whole-register semantics and alignment rules as the
 `vl__n__re8.v` and `vs__n__r.v` instructions of the dependency set
 (<<sec:zvaios-depends>>).#
 
+[#norm:zvaios_vstart]#A ext:zvaios[] instruction is reserved if
+csr:vstart[] is non-zero; an illegal-instruction exception is raised
+and no store is performed. A ext:zvaios[] instruction does not write
+csr:vstart[]. In particular, an exception raised by a ext:zvaios[]
+instruction never leaves csr:vstart[] non-zero, because delivery is
+all-or-nothing (<<sec:zvaios-atomicity>>) and the instruction is
+therefore never resumed part-way through.#
+
+NOTE: A ext:zvaios[] instruction reads its payload with
+whole-register semantics and therefore does not depend upon
+csr:vtype[]. Like the whole-register loads and stores of the
+dependency set, it executes normally when csr::[vill] is set and when
+csr:vtype[] has not been configured since reset: the base vector
+specification raises an illegal-instruction exception with
+csr::[vill] set only for instructions that depend upon csr:vtype[].
+Software therefore needs no insn:vset*[] instruction to stage a
+payload or to save and restore the vector registers, and an
+implementation that provides only the state of
+<<sec:zvaios-depends>> need not implement csr:vtype[] at all.
+
 [#norm:zvaios_payload_init]#A ext:zvaios[] instruction transfers the
 full width of the store from the vector register group regardless of
 how many payload bits software has initialized. Software must
@@ -266,16 +284,16 @@ function of VLEN.#
 completion status word of XLEN bits to the destination register _rd_,
 or discards the status word when _rd_ is `x0`. The instruction does
 not retire until the status word is available in _rd_ (if captured)
-and the atomicity guarantee defined in <<sec:zvaios-atomicity>> is in
-place.#
+and its store is committed for delivery, or until it is determined
+that no payload will be delivered (<<sec:zvaios-atomicity>>).#
 
 [#norm:zvaios_status_vocab]#The following encodings are architecturally
 reserved in the status word:#
 
 * [#norm:zvaios_status_success]#A value of 0 indicates _success_: the
-  implementation has completed the I/O-atomic store and is unable to
-  report any condition that would prevent the target from processing
-  the submission.#
+  implementation has committed the store for delivery
+  (<<sec:zvaios-atomicity>>) and is unable to report any condition
+  that would prevent the target from processing the submission.#
 * [#norm:zvaios_status_retry]#A value of 1 indicates _retry_: the
   implementation has determined that the target is temporarily unable
   to accept the submission and software should reissue the
@@ -283,6 +301,37 @@ reserved in the status word:#
 * [#norm:zvaios_status_impl]#Values 2 and above are
   implementation-defined. An implementation must document the
   meaning of each value it produces.#
+
+[#norm:zvaios_status_retry_nothing]#A status word of _retry_ indicates
+that no byte of the payload was delivered to the target and that the
+target's state is unchanged by the instruction. Reissuing the
+instruction after a _retry_ status therefore submits the payload
+exactly once.#
+
+[#norm:zvaios_status_impl_delivery]#An implementation that reports an
+implementation-defined status value (2 or above) must document
+whether the payload was delivered under that value. Software must not
+reissue an instruction that reported an implementation-defined status
+unless the implementation documents that value as delivering no
+payload.#
+
+NOTE: A _success_ status is not an acknowledgement by the target.
+Software cannot conclude from it that the target has observed the
+submission, let alone processed it. Software that needs such an
+acknowledgement obtains it from the target by device-specific means.
+An implementation that retires a ext:zvaios[] instruction as soon as
+its store is committed for delivery, without obtaining feedback from
+the target, never reports _retry_; only an implementation that
+obtains such feedback can do so.
+
+NOTE: The _retry_ encoding exists so that software can respond to a
+full device queue without polling the device. This is only safe if
+_retry_ excludes delivery: a submission that is neither idempotent
+nor delivered exactly once would be processed twice if the target had
+in fact accepted the payload before reporting _retry_. The
+architecture therefore binds _retry_ to non-delivery, and requires
+implementations to state the delivery status of any value they define
+beyond the two reserved encodings.
 
 [#norm:zvaios_status_source]#The mechanism by which the implementation
 obtains the status word is not architecturally defined. Software
@@ -527,24 +576,96 @@ illegal-instruction exception is raised and no store is performed.#
 [[sec:zvaios-atomicity]]
 ==== Atomicity
 
+===== Observers
+
+[#norm:zvaios_observer_def]#An _observer_ of a ext:zvaios[] store is
+any agent that can read the target address or otherwise observe its
+contents. Observers include other harts, the target device itself,
+and any DMA agent or other device acting on the interconnect.#
+
 ===== I/O-Atomic Delivery
 
 [#norm:zvaios_io_atomic_def]#A ext:zvaios[] instruction performs an
-_I/O-atomic store_: the payload is guaranteed to be conveyed to the
-target address as a single, indivisible bus transaction. No store by
-another hart to the same target address may be observed by the target
-between the first and last byte of an I/O-atomic store.#
+_I/O-atomic store_: no observer observes the payload in a partially
+complete state. Every observer observes either none of the payload or
+all of it.#
+
+[#norm:zvaios_io_atomic_conflict]#No write by another agent to an
+address that overlaps the target range is interleaved with an
+I/O-atomic store. An observer observes the two writes in one order or
+the other, and never a mixture of the two.#
+
+[#norm:zvaios_io_atomic_read]#A read of the target range that is
+performed concurrently with an I/O-atomic store returns either the
+state before the store or the state after it, and never a mixture of
+the two.#
+
+NOTE: The two preceding rules bind the implementation and the
+interconnect between the hart and the target. They cannot bind an
+agent that writes the target outside that path, such as a device that
+modifies its own submission portal internally.
 
 [#norm:zvaios_io_atomic_allornothing]#Delivery is all-or-nothing with
 respect to faults as well as contention. A ext:zvaios[] instruction
-that raises any exception delivers no bytes of the payload to the
+that raises any exception delivers no part of the payload to the
 target; a partial payload is never delivered.#
 
 [#norm:zvaios_io_atomic_mech]#The ISA does not prescribe how an
-implementation achieves this guarantee. Possible mechanisms include a
-wide interconnect data path, a write-combining buffer with an atomic
-flush, or a dedicated I/O store path. The requirement is only that the
-externally-observable behavior matches the definition above.#
+implementation achieves these guarantees. Possible mechanisms include
+a wide interconnect data path, a write-combining buffer with an
+atomic flush, or a dedicated I/O store path. The requirement is only
+that the externally-observable behavior matches the definitions
+above.#
+
+NOTE: The definitions above are stated in terms of what an observer
+can observe, rather than in terms of a bus transaction, because the
+interconnect between a hart and an I/O target is not architecturally
+visible. On most implementations the guarantee is achieved by
+conveying the payload as a single indivisible bus transaction, but
+any mechanism with the same observable behavior is permitted.
+
+===== Commitment for Delivery
+
+[#norm:zvaios_commit_point]#An I/O-atomic store is _committed for
+delivery_ when no subsequent action by the hart can prevent the
+payload from being delivered to the target. Such actions include
+raising an exception, taking an interrupt, executing a insn:fence[],
+and executing any later instruction. Once the store is committed for
+delivery, the payload becomes observable by the target, unless an
+event occurs that would also prevent the delivery of an ordinary
+posted write to the same target. Commitment does not imply that the
+payload has yet been observed by the target.#
+
+NOTE: Events that prevent the delivery of an ordinary posted write
+include loss of power to the hart, the interconnect, or the target;
+reset of any of these; failure of the interconnect; removal or
+power-down of the target; and detection of an uncorrectable error in
+the buffered payload. Congestion or backpressure at the target is not
+such an event: an implementation must complete a committed delivery
+however long the target takes to accept it.
+
+[#norm:zvaios_commit_noexc]#A ext:zvaios[] instruction raises no
+exception after its store is committed for delivery.#
+
+[#norm:zvaios_io_atomic_once]#Each architectural execution of a
+ext:zvaios[] instruction delivers its payload to the target at most
+once. Before the store is committed for delivery, an implementation
+may abandon the instruction, for example to take an interrupt, in
+which case no part of the payload is delivered. After the store is
+committed for delivery, the instruction retires and is not
+re-executed. Re-execution of an abandoned instruction, for example
+after a trap handler returns, never delivers a payload that a
+previous execution has already delivered.#
+
+NOTE: These rules make a ext:zvaios[] instruction safe to interrupt.
+Because the instruction does not retire until its store is committed
+for delivery (<<sec:zvaios-insns>>), an implementation may hold it
+pending for an extended period, during which an interrupt may preempt
+it. Without an at-most-once requirement, an implementation could
+issue the payload, abandon the instruction, and issue the payload
+again on re-execution, delivering a non-idempotent submission twice.
+An implementation that cannot withdraw a payload once issued
+therefore holds the interrupt until the instruction retires.
 
 ===== Relationship to Single-Copy Atomicity
 
@@ -553,6 +674,19 @@ single-copy atomicity, defined in <<memorymodel>>, from the coherence
 domain to external I/O targets. Within the coherence domain, a
 ext:zvaios[] store is observed by other harts as a single-copy-atomic
 store with respect to loads from the target address.#
+
+[#norm:zvaios_single_memop]#A ext:zvaios[] instruction follows RVWMO
+at the instruction level, as do other vector memory instructions.
+Unlike element-wise vector stores, it gives rise to no separate
+element memory operations: the payload is delivered as one
+indivisible unit, as defined in this section.#
+
+NOTE: The atomicity of a ext:zvaios[] store is defined in this
+chapter rather than by reference to <<memorymodel>>, because the
+target is always an I/O region (<<sec:zvaios-io>>) and the memory
+model does not formalize I/O memory. Ordering with respect to other
+accesses is governed by the rules for I/O writes in
+<<sec:zvaios-io>>.
 
 ===== Observability
 
@@ -625,25 +759,40 @@ following exceptions, in the order of precedence listed below:#
    privilege level is clear, except that a _virtual instruction_
    exception is raised instead in the VS/VU-mode case defined in
    <<sec:zvaios-enable>>,#
+.. [#norm:zvaios_exc_vstart]#csr:vstart[] is non-zero
+   (<<sec:zvaios-insns>>),#
 .. [#norm:zvaios_exc_vlen]#the implementation's VLEN is too small to
    accommodate the requested width (i.e. the required register group
    would exceed 8 vector registers),#
 .. [#norm:zvaios_exc_fmt]#the `length` field of the applicable format
    CSR holds a reserved value, or `shift + length` exceeds the width
    of the store.#
-. [#norm:zvaios_exc_misaligned]#_Store/AMO address misaligned_ is
-  raised if the target address is not naturally aligned to the store
-  width.#
-. [#norm:zvaios_exc_fault]#_Store/AMO access fault_ is raised if the
-  target address lies in a main-memory region (<<sec:zvaios-io>>) or
-  violates any other PMA or PMP requirement.#
 . [#norm:zvaios_exc_virt]#_Virtual instruction_ is raised when
   executing in VS-mode or VU-mode with the corresponding `hstateen`
   bit clear.#
+. [#norm:zvaios_exc_misaligned]#_Store/AMO address misaligned_ is
+  raised if the target address is not naturally aligned to the store
+  width.#
+. [#norm:zvaios_exc_page]#_Store/AMO page fault_ is raised if address
+  translation is in effect and the translation of the target address
+  fails, following the same rules as any other store.#
+. [#norm:zvaios_exc_gpage]#_Store/AMO guest-page fault_ is raised
+  under virtualization if second-stage translation of the target
+  address fails, following the same rules as any other store.#
+. [#norm:zvaios_exc_fault]#_Store/AMO access fault_ is raised if the
+  target address lies in a main-memory region (<<sec:zvaios-io>>) or
+  violates any other PMA or PMP requirement.#
 
 [#norm:zvaios_exc_tval]#On any exception raised by a
-ext:zvaios[] instruction, csr:mtval[] or csr:stval[] contains the faulting I/O
-address from _rs1_.#
+ext:zvaios[] instruction, csr:mtval[] or csr:stval[] contains the
+faulting address from _rs1_: the virtual address when address
+translation is in effect, and the physical address otherwise, as for
+any other store. csr:htval[] is written on a guest-page fault,
+following the same rules as any other store.#
+
+[#norm:zvaios_exc_nostore]#No exception raised by a
+ext:zvaios[] instruction delivers any part of the payload to the
+target (<<sec:zvaios-atomicity>>).#
 
 [[sec:zvaios-security]]
 ==== Security Considerations
@@ -723,6 +872,14 @@ while its format is still zero can supply its own identifier.
   the device.
 * *Completion status.* The status word in _rd_ is derived from the
   device and is untrusted; software must validate it before use.
+* *Teardown.* A submission that has been committed for delivery
+  (<<sec:zvaios-atomicity>>) cannot be recalled. Clearing `AIOSE`,
+  changing csr:senqid[], unmapping the target, or tearing down the
+  context prevents further submissions, but does not withdraw one
+  already committed, which is delivered under the identifier in
+  effect when it was issued. Privileged software that must ensure no
+  submission remains outstanding quiesces the context before it
+  reclaims the target or reassigns the identifier.
 
 ===== Availability
 
@@ -1064,6 +1221,17 @@ No normative changes to the memory model chapters. The I/O-atomic
 delivery concept introduced in <<sec:zvaios-atomicity>> is defined
 entirely within this chapter; it remains so unless RVWMO is later
 extended to formalize I/O operations in general.
+
+This holds only because ext:zvaios[] targets are restricted to I/O
+regions (<<sec:zvaios-io>>), which RVWMO expressly does not
+formalize. An editor who relaxes that restriction to permit
+main-memory targets must reconsider this item: a store of up to 1024
+bits to coherent main memory would have to be defined as a single
+store memory operation under RVWMO, which changes the operation
+taxonomy in <<memorymodel>> and its explanatory and formal
+appendices, and which falls within the class of overlapping accesses
+of differing widths that RVWMO identifies as not yet fully
+understood.
 
 ===== Other Chapters
 
