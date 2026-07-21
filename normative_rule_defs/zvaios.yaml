@@ -228,6 +228,23 @@ normative_rule_definitions:
     summary: The target address must additionally have PMAs permitting I/O writes of the specified width; otherwise an access-fault exception is raised.
     tags: ["norm:zvaios_pma_required"]
 
+  # --- Software interface ---
+  - name: zvaios_intrinsics
+    summary: A C implementation supporting Zvaios provides the __riscv_vs{128,256,512}io_v_u8m{1,2,4} intrinsics in riscv_vector.h, with __riscv_vs1024io_v_u8m8 provided when Zvaios1024 is supported; payload types are the vuint8m{1,2,4,8}_t types of the vector intrinsics specification.
+    tags: ["norm:zvaios_intrinsics"]
+
+  - name: zvaios_intrinsic_semantics
+    summary: Each intrinsic call executes exactly one instruction (first n bits of the payload argument, addr as target, XLEN-bit status returned) with volatile-access ordering; calls are not duplicated, eliminated, or reordered against other volatile accesses.
+    tags: ["norm:zvaios_intrinsic_semantics"]
+
+  - name: zvaios_intrinsic_discard
+    summary: When the returned value is unused, the C implementation may encode x0 as the destination register, discarding the status word.
+    tags: ["norm:zvaios_intrinsic_discard"]
+
+  - name: zvaios_intrinsic_staging
+    summary: The vuint8m{1,2,4,8}_t types and the whole-register load/store intrinsics are provided on every Zvaios implementation, whether or not a vector extension is implemented.
+    tags: ["norm:zvaios_intrinsic_staging"]
+
   # --- Exceptions ---
   - name: zvaios_exceptions
     summary: Zvaios instructions may raise illegal-instruction, store/AMO-address-misaligned, store/AMO-access-fault, and virtual-instruction exceptions in the stated precedence order.

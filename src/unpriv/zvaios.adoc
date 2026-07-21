@@ -850,6 +850,128 @@ following the same rules as any other store.#
 ext:zvaios[] instruction delivers any part of the payload to the
 target (<<sec:zvaios-atomicity>>).#
 
+[[sec:zvaios-software]]
+==== Software Interface
+
+===== C Intrinsics
+
+[#norm:zvaios_intrinsics]#A C implementation that supports the
+ext:zvaios[] extension provides the following intrinsic functions,
+declared in the `riscv_vector.h` header. The payload types are the
+`vuint8m1_t`, `vuint8m2_t`, `vuint8m4_t`, and `vuint8m8_t` types of
+the vector intrinsics specification. The intrinsic for
+insn:vs1024io.v[] is provided when the ext:zvaios1024[] extension is
+supported.#
+
+[source,c]
+----
+unsigned long __riscv_vs128io_v_u8m1(volatile void *addr, vuint8m1_t payload);
+unsigned long __riscv_vs256io_v_u8m2(volatile void *addr, vuint8m2_t payload);
+unsigned long __riscv_vs512io_v_u8m4(volatile void *addr, vuint8m4_t payload);
+
+#if defined(__riscv_zvaios1024)
+unsigned long __riscv_vs1024io_v_u8m8(volatile void *addr, vuint8m8_t payload);
+#endif
+----
+
+[#norm:zvaios_intrinsic_semantics]#Each call executes exactly one
+corresponding instruction, with the first _n_ bits of the payload
+argument as the store payload and `addr` as the target address, and
+returns the XLEN-bit completion status word. A call has the ordering
+semantics of a volatile access: the C implementation executes exactly
+one instruction per call, and does not duplicate or eliminate the
+call, or reorder it with respect to other volatile accesses.#
+
+[#norm:zvaios_intrinsic_discard]#When the value returned by a call is
+not used, the C implementation may encode `x0` as the destination
+register, discarding the status word.#
+
+[#norm:zvaios_intrinsic_staging]#The `vuint8m1_t`, `vuint8m2_t`,
+`vuint8m4_t`, and `vuint8m8_t` types, and the whole-register load
+and store intrinsics (`+__riscv_vl1re8_v_u8m1+` through
+`+__riscv_vl8re8_v_u8m8+` and `+__riscv_vs1r_v_u8m1+` through
+`+__riscv_vs8r_v_u8m8+`), are provided on every implementation that
+supports ext:zvaios[], whether or not a vector extension is
+implemented.#
+
+NOTE: Toolchains indicate availability with the architecture test
+macros `+__riscv_zvaios+` and `+__riscv_zvaios1024+`, following the
+RISC-V C API convention.
+
+===== Usage Guidance
+
+This section is informative.
+
+The payload type of each intrinsic is sized for the smallest
+supported VLEN of 128: it spans exactly the register group the
+instruction reads at VLEN = 128, and more than the instruction reads
+at larger VLEN. The instruction consumes only the first _n_ bits of
+the argument, so the same source code is correct on every VLEN.
+
+Software stages a payload with the whole-register load intrinsics,
+which transfer whole registers: a `+__riscv_vl4re8_v_u8m4+` call
+reads 4 × VLENB bytes from memory, which is more than the 64-byte
+payload when VLEN exceeds 128. A staging buffer must therefore be
+readable for _k_ × VLENB bytes, where _k_ is the register count of
+the load, not merely for the payload size; rounding ring-slot
+allocations up to a multiple of _k_ × VLENB avoids reading beyond
+the buffer.
+
+Software fully initializes every payload byte before submitting, so
+that no stale register or buffer contents reach the device
+(<<sec:zvaios-security>>), and validates the returned status word
+before acting on it. When a payload carries secrets, such as
+cryptographic keys or IVs, software should zeroize the payload
+registers after submission, since their contents otherwise persist
+and are saved to memory on the next context switch; on an
+implementation without vector arithmetic instructions, this is done
+with a whole-register load from a zeroed buffer. A status of 0 means the store is committed for
+delivery; a status of 1 means nothing was delivered and the
+submission may be reissued after a backoff; any other value is
+implementation-defined and must not be treated as grounds to reissue
+unless the implementation documents it as delivering no payload
+(<<sec:zvaios-insns>>).
+
+[source,c]
+----
+// Submit a 64-byte descriptor. slot must be readable for
+// 4 * VLENB bytes (round ring-slot allocations up accordingly).
+static inline unsigned long
+submit512(volatile void *portal, const uint8_t *slot)
+{
+    vuint8m4_t payload = __riscv_vl4re8_v_u8m4(slot);
+    return __riscv_vs512io_v_u8m4(portal, payload);
+}
+
+int submit(volatile void *portal, const uint8_t *slot)
+{
+    for (unsigned tries = 0; tries <= MAX_RETRY; tries++) {
+        unsigned long status = submit512(portal, slot);
+        if (status == 0)
+            return 0;          /* committed for delivery */
+        if (status != 1)
+            return -EIO;       /* implementation-defined: do not
+                                  reissue unless documented safe */
+        backoff(tries);        /* retry: nothing was delivered */
+    }
+    return -EBUSY;
+}
+----
+
+Ordering with respect to other device accesses follows the rules for
+I/O writes (<<sec:zvaios-io>>): a insn:fence[] with the appropriate
+predecessor and successor sets is required between a submission and
+any ordinary load or store to the device that must be observed in a
+specific order relative to it. No fence is needed between staging a
+payload and submitting it; the intrinsic consumes the payload
+through a register dependency.
+
+Execution below M-mode requires the supervisor to have set the
+`AIOSE` enable (<<sec:zvaios-enable>>); a call from a context whose
+enable is clear traps. The submission context identifier and its
+insertion format are supervisor state (csr:senqid[], csr:senqfmt[]);
+user code neither reads nor writes them.
+
 [[sec:zvaios-security]]
 ==== Security Considerations
 
