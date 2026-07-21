@@ -26,7 +26,7 @@ normative_rule_definitions:
     tags: ["norm:zvaios_min_sufficient"]
 
   - name: zvaios_v_compat
-    summary: Zvaios composes with the vector extensions; on an implementation that also provides V or a Zve* extension, the included state and instructions are the same state and instructions defined there, implemented once.
+    summary: On an implementation that also provides V or a Zve* extension, the included state and instructions are those defined by the vector extensions.
     tags: ["norm:zvaios_v_compat"]
 
   # --- Enabling execution at lower privilege levels ---
@@ -172,7 +172,7 @@ normative_rule_definitions:
     tags: ["norm:zvaios_observer_def"]
 
   - name: zvaios_io_atomic_def
-    summary: A Zvaios instruction performs an I/O-atomic store; no observer observes the payload in a partially complete state, and every observer observes either none or all of it.
+    summary: A Zvaios instruction performs an I/O-atomic store; no observer observes the payload in a partially complete state, seeing either none of it or all of it.
     tags: ["norm:zvaios_io_atomic_def"]
 
   - name: zvaios_io_atomic_conflict
@@ -212,7 +212,7 @@ normative_rule_definitions:
     tags: ["norm:zvaios_single_memop"]
 
   - name: zvaios_observability
-    summary: The atomicity guarantee holds regardless of interconnect topology and applies to observations by other harts, the target device, and DMA agents.
+    summary: The atomicity guarantee holds regardless of interconnect topology and applies to every observer, over coherent, non-coherent, or mixed paths.
     tags: ["norm:zvaios_observability"]
 
   # --- I/O classification and ordering ---
@@ -263,7 +263,7 @@ normative_rule_definitions:
     tags: ["norm:zvaios_exc_page"]
 
   - name: zvaios_exc_gpage
-    summary: Store/AMO guest-page fault is raised under virtualization if second-stage translation of the target address fails, as for any other store.
+    summary: Store/AMO guest-page fault is raised under virtualization if second-stage translation of the target address fails.
     tags: ["norm:zvaios_exc_gpage"]
 
   - name: zvaios_exc_fault
