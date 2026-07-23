@@ -22,10 +22,6 @@ implementation-defined completion status word to a destination
 register, or discards the status word when the destination register
 is `x0`.
 
-A design goal is that small I/O offload cores can implement
-ext:zvaios[] without the vector extensions; the vector state and
-instructions it needs are included (<<sec:zvaios-depends>>).
-
 NOTE: This extension is in *Draft* status and has not been ratified.
 The instruction encodings shown in this chapter are provisional,
 pending codepoint allocation, and the CSR addresses are unassigned;
@@ -41,11 +37,11 @@ within this chapter; it remains so unless the RISC-V memory model
 ====
 
 [#norm:zvaios_depends]#The ext:zvaios[] extension depends upon the
-ext:zicsr[] extension and upon nothing else. The vector register
-state and the data-movement instructions that ext:zvaios[] uses are
-included in the extension itself, as defined in
-<<sec:zvaios-depends>>. The extension composes with, but neither
-requires nor implies, the vector extensions.#
+ext:zicsr[], ext:zve32x[], and ext:zvl128b[] extensions.#
+
+Of its vector dependency, ext:zvaios[] uses only the vector register
+file, the whole-register loads and stores, csr:vlenb[] and
+csr:vstart[], and the `VS` context status field.
 
 The ext:smstateen[] extension controls access to the ext:zvaios[]
 CSRs, as described in <<sec:zvaios-senqid>>.
@@ -53,68 +49,6 @@ CSRs, as described in <<sec:zvaios-senqid>>.
 The security model of the extension, the threats it is exposed to, and
 the controls that mitigate them are described in
 <<sec:zvaios-security>>.
-
-[[sec:zvaios-depends]]
-==== Included State and Instructions
-
-[#norm:zvaios_min_state]#The ext:zvaios[] extension includes the
-following architectural state, with the semantics defined by the base
-vector specification:#
-
-* [#norm:zvaios_min_regs]#the 32 vector registers `v0` through
-  `v31`, and `VLEN >= 128`;#
-* [#norm:zvaios_min_csrs]#the csr:vlenb[] and csr:vstart[] CSRs;
-  and#
-* [#norm:zvaios_min_vs]#the `VS` vector context status field of
-  csr:mstatus[] and csr:sstatus[].#
-
-[#norm:zvaios_min_insns]#The ext:zvaios[] extension includes the
-following instructions, with the semantics defined by the base vector
-specification:#
-
-* [#norm:zvaios_min_loads]#the whole-register load instructions
-  insn:vl1re8.v[], insn:vl2re8.v[], insn:vl4re8.v[], and
-  insn:vl8re8.v[], which software uses to move payload data from
-  memory into a vector register group; and#
-* [#norm:zvaios_min_stores]#the whole-register store instructions
-  insn:vs1r.v[], insn:vs2r.v[], insn:vs4r.v[], and insn:vs8r.v[],
-  which are included so that privileged software can save and restore
-  the vector registers on a context switch.#
-
-[#norm:zvaios_min_sufficient]#No other vector instruction or vector
-CSR is included or required. In particular, ext:zvaios[] does not
-require the
-configuration-setting instructions; the csr:vtype[], csr:vl[], and
-csr:vcsr[] CSRs; instructions that compute on vector register
-contents; element-wise vector loads and stores; or instructions that
-transfer data from a vector register to a scalar register.#
-
-[#norm:zvaios_v_compat]#On an implementation that also provides
-ext:v[] or a ext:zve*[] extension, the state and instructions listed
-above are those defined by the vector extensions.#
-
-[NOTE]
-====
-ext:zvaios[] includes its vector capabilities rather than depending
-on a vector extension, because even the smallest ext:zve*[] subset
-includes the complete integer vector arithmetic instruction set. A
-ext:zvaios[] payload is data that software stages for delivery, not
-data that the vector unit computes: software assembles a descriptor
-in memory, loads it into a vector register group, and submits it.
-The only vector capabilities this requires are the register file
-itself, a way to fill it from memory, and a way for privileged
-software to save and restore it on a context switch. Including only
-these allows a small control or I/O core (for example, a core whose
-only role is to submit descriptors to accelerators) to implement
-ext:zvaios[] without vector arithmetic data paths. The
-whole-register stores do transfer data out
-of the vector register file, but the data path they use must exist
-in any case for context switching, so including them adds no
-hardware beyond the minimum. The included instructions are the same
-on every ext:zvaios[] implementation, with or without
-ext:zvaios1024[], so payload-staging and context-switch code is
-identical everywhere.
-====
 
 [[sec:zvaios-enable]]
 ==== Enabling Atomic I/O Stores
@@ -209,14 +143,14 @@ status word to the destination register _rd_. When _rd_ is `x0`, the
 completion status word is discarded.#
 
 [#norm:zvaios_whole_reg]#The source data is read from the vector
-register file using whole-register semantics, independent of any
-vector configuration state (csr:vtype[] and csr:vl[], where
-implemented). The number of vector registers consumed is equal to
+register file using whole-register semantics, independent of the
+current values of csr:vtype[] and csr:vl[]. The number of vector
+registers consumed is equal to
 `max(1, n / VLEN)`. The register group must be aligned such that the
 first register index is a multiple of the group size, following the
 same whole-register semantics and alignment rules as the
-`vl__n__re8.v` and `vs__n__r.v` instructions included with the
-extension (<<sec:zvaios-depends>>).#
+`vs__n__r.v` whole-register store instructions of the base vector
+specification.#
 
 [#norm:zvaios_vstart]#A ext:zvaios[] instruction is reserved if
 csr:vstart[] is non-zero; an illegal-instruction exception is raised
@@ -226,15 +160,11 @@ so the instruction is never resumed part-way through.#
 
 NOTE: A ext:zvaios[] instruction reads its payload with
 whole-register semantics and therefore does not depend upon
-csr:vtype[]. Like the included whole-register loads and stores, it
-executes normally when csr::[vill] is set and when
-csr:vtype[] has not been configured since reset: the base vector
-specification raises an illegal-instruction exception with
-csr::[vill] set only for instructions that depend upon csr:vtype[].
-Software therefore needs no insn:vset*[] instruction to stage a
-payload or to save and restore the vector registers, and an
-implementation that provides only the state of
-<<sec:zvaios-depends>> need not implement csr:vtype[] at all.
+csr:vtype[]. Like the whole-register loads and stores, it executes
+normally when csr::[vill] is set and when csr:vtype[] has not been
+configured since reset, since csr::[vill] raises an
+illegal-instruction exception only for instructions that depend upon
+csr:vtype[].
 
 [#norm:zvaios_payload_init]#A ext:zvaios[] instruction transfers the
 full width of the store from the vector register group regardless of
@@ -856,14 +786,6 @@ accesses.#
 not used, the C implementation may encode `x0` as the destination
 register, discarding the status word.#
 
-[#norm:zvaios_intrinsic_staging]#The `vuint8m1_t`, `vuint8m2_t`,
-`vuint8m4_t`, and `vuint8m8_t` types, and the whole-register load
-and store intrinsics (`+__riscv_vl1re8_v_u8m1+` through
-`+__riscv_vl8re8_v_u8m8+` and `+__riscv_vs1r_v_u8m1+` through
-`+__riscv_vs8r_v_u8m8+`), are provided on every implementation that
-supports ext:zvaios[], whether or not a vector extension is
-implemented.#
-
 NOTE: Toolchains indicate availability with the architecture test
 macros `+__riscv_zvaios+` and `+__riscv_zvaios1024+`, following the
 RISC-V C API convention.
@@ -878,14 +800,13 @@ instruction reads at VLEN = 128, and more than the instruction reads
 at larger VLEN. The instruction consumes only the first _n_ bits of
 the argument, so the same source code is correct on every VLEN.
 
-Software stages a payload with the whole-register load intrinsics,
-which transfer whole registers: a `+__riscv_vl4re8_v_u8m4+` call
-reads 4 × VLENB bytes from memory, which is more than the 64-byte
-payload when VLEN exceeds 128. A staging buffer must therefore be
-readable for _k_ × VLENB bytes, where _k_ is the register count of
-the load, not merely for the payload size; rounding ring-slot
-allocations up to a multiple of _k_ × VLENB avoids reading beyond
-the buffer.
+Software stages a payload with insn:vle8.v[], using an application
+vector length equal to the payload size in bytes; this reads exactly
+the payload from memory. The whole-register load intrinsics may be
+used instead, but they transfer whole registers: a
+`+__riscv_vl4re8_v_u8m4+` call reads 4 × VLENB bytes, so when VLEN
+exceeds 128 the staging buffer must be readable to that size, not
+merely to the payload size.
 
 Software fully initializes every payload byte before submitting, so
 that no stale register or buffer contents reach the device
@@ -893,9 +814,7 @@ that no stale register or buffer contents reach the device
 before acting on it. When a payload carries secrets, such as
 cryptographic keys or IVs, software should zeroize the payload
 registers after submission, since their contents otherwise persist
-and are saved to memory on the next context switch; on an
-implementation without vector arithmetic instructions, this is done
-with a whole-register load from a zeroed buffer.
+and are saved to memory on the next context switch.
 
 A status of 0 means the store is committed for delivery; a status of
 1 means nothing was delivered and the submission may be reissued
@@ -905,12 +824,11 @@ documents it as delivering no payload (<<sec:zvaios-insns>>).
 
 [source,c]
 ----
-// Submit a 64-byte descriptor. slot must be readable for
-// 4 * VLENB bytes (round ring-slot allocations up accordingly).
+// Submit a 64-byte descriptor.
 static inline unsigned long
 submit512(volatile void *portal, const uint8_t *slot)
 {
-    vuint8m4_t payload = __riscv_vl4re8_v_u8m4(slot);
+    vuint8m4_t payload = __riscv_vle8_v_u8m4(slot, 64);
     return __riscv_vs512io_v_u8m4(portal, payload);
 }
 
@@ -1061,17 +979,8 @@ register allocation; a staging buffer would add new architectural
 state that must be saved and restored on every context switch. The
 vector register file already provides both the state and the data
 path: whole-register loads and stores are defined by the base vector
-specification, payload widths of 128 to 1024 bits arise naturally
-from register grouping, and the required state and instructions are
-small enough to include in the extension itself
-(<<sec:zvaios-depends>>).
-
-We considered expressing the vector requirement as a dependency on
-one of the ext:zve*[] extensions. Even the smallest, ext:zve32x[],
-includes the complete integer vector arithmetic instruction set,
-which a submission-only core does not need. The extension therefore
-includes the state and instructions itself, and composes with the
-vector extensions instead of depending on one.
+specification, and payload widths of 128 to 1024 bits arise
+naturally from register grouping.
 
 The atomic store alone is complete for a single trusted submitter;
 the submission context identifier exists only so that multiple
@@ -1099,8 +1008,8 @@ need feedback.
 The extension is proposed on the fast track because its scope is
 narrow and self-contained: it composes mechanisms that have each been
 established for decades (see <<sec:zvaios-prior-art>>), modifies no
-existing chapter of this manual, includes the small set of vector
-state and instructions it needs, and confines its one new concept ---
+existing chapter of this manual, depends only on ext:zicsr[] and the
+smallest standard vector extensions, and confines its one new concept ---
 I/O-atomic delivery --- to this chapter. All external prior art
 predates the 20-year horizon of the RISC-V Encumbered Information
 Policy.
@@ -1154,12 +1063,8 @@ base vector specification also establishes the `nf` field encoding
 for register group sizes 1, 2, 4, and 8, which ext:zvaios[] reuses as
 the width selector. Because the data path from vector register file
 to the store buffer is already specified for `vs{1,2,4,8}r.v`, any
-implementation of the ext:v[] extension already has the
-infrastructure needed for ext:zvaios[]. The state and instructions
-included by ext:zvaios[] (<<sec:zvaios-depends>>) are a strict subset
-of these ratified semantics, so a minimal implementation needs only the
-vector register file and the whole-register load/store data path,
-not the vector arithmetic data paths. This removes an entire class
+implementation of the ext:zve32x[] extension already has the
+infrastructure needed for ext:zvaios[]. This removes an entire class
 of potential objections to the extension: the data-movement mechanism
 is not new; only the atomicity guarantee at the target and the
 insertion of the submission context identifier are new.
@@ -1395,6 +1300,4 @@ understood.
 No changes to the base vector specification, the insn:fence[]
 instruction description, the ext:a[] extension, or any other existing
 chapter of this manual. The ext:zvaios[] chapter references these
-chapters but does not modify them. In particular, the state and
-instructions included in <<sec:zvaios-depends>> are defined by
-reference to the base vector specification and do not modify it.
+chapters but does not modify them.

@@ -10,24 +10,8 @@ chapter_name: Zvaios (Vector Extension for Atomic I/O Stores)
 normative_rule_definitions:
   # --- Extension dependencies ---
   - name: zvaios_depends
-    summary: Zvaios depends upon Zicsr and nothing else; the vector register state and data-movement instructions it uses are included in the extension itself, which composes with but neither requires nor implies the vector extensions.
+    summary: Zvaios depends upon the Zicsr, Zve32x, and Zvl128b extensions.
     tags: ["norm:zvaios_depends"]
-
-  - name: zvaios_min_state
-    summary: Included vector state is the 32 vector registers with VLEN >= 128, the vlenb and vstart CSRs, and the mstatus/sstatus VS field, with base-vector-specification semantics.
-    tags: ["norm:zvaios_min_state", "norm:zvaios_min_regs", "norm:zvaios_min_csrs", "norm:zvaios_min_vs"]
-
-  - name: zvaios_min_insns
-    summary: Included instructions are the whole-register loads vl{1,2,4,8}re8.v (to move payload data into vector registers) and the whole-register stores vs{1,2,4,8}r.v (so privileged software can save and restore vector registers on a context switch).
-    tags: ["norm:zvaios_min_insns", "norm:zvaios_min_loads", "norm:zvaios_min_stores"]
-
-  - name: zvaios_min_sufficient
-    summary: No other vector instruction or vector CSR is included or required; in particular no configuration-setting instructions or vtype/vl/vcsr CSRs, no computation on vector registers, no element-wise loads or stores, and no vector-to-scalar transfers.
-    tags: ["norm:zvaios_min_sufficient"]
-
-  - name: zvaios_v_compat
-    summary: On an implementation that also provides V or a Zve* extension, the included state and instructions are those defined by the vector extensions.
-    tags: ["norm:zvaios_v_compat"]
 
   # --- Enabling execution at lower privilege levels ---
   - name: zvaios_aiose
@@ -240,10 +224,6 @@ normative_rule_definitions:
   - name: zvaios_intrinsic_discard
     summary: When the returned value is unused, the C implementation may encode x0 as the destination register, discarding the status word.
     tags: ["norm:zvaios_intrinsic_discard"]
-
-  - name: zvaios_intrinsic_staging
-    summary: The vuint8m{1,2,4,8}_t types and the whole-register load/store intrinsics are provided on every Zvaios implementation, whether or not a vector extension is implemented.
-    tags: ["norm:zvaios_intrinsic_staging"]
 
   # --- Exceptions ---
   - name: zvaios_exceptions
