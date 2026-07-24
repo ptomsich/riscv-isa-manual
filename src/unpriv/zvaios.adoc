@@ -8,7 +8,7 @@ descriptors to hardware accelerators, device work queues, and other
 I/O endpoints that require the entire descriptor to arrive as a
 single, indivisible unit (_I/O-atomic delivery_,
 <<sec:zvaios-atomicity>>). To support multi-tenant use,
-hardware can additionally insert a supervisor-controlled submission
+hardware can insert a supervisor-controlled submission
 context identifier into the store payload, so that a device shared by
 mutually distrusting contexts can attribute each submission.
 
@@ -43,12 +43,8 @@ Of its vector dependency, ext:zvaios[] uses only the vector register
 file, the whole-register loads and stores, csr:vlenb[] and
 csr:vstart[], and the `VS` context status field.
 
-The ext:smstateen[] extension controls access to the ext:zvaios[]
-CSRs, as described in <<sec:zvaios-senqid>>.
-
-The security model of the extension, the threats it is exposed to, and
-the controls that mitigate them are described in
-<<sec:zvaios-security>>.
+CSR access control (<<sec:zvaios-senqid>>) and the security model
+(<<sec:zvaios-security>>) are described below.
 
 [[sec:zvaios-enable]]
 ==== Enabling Atomic I/O Stores
@@ -57,8 +53,8 @@ A ext:zvaios[] instruction issues a wide, I/O-atomic write
 (<<sec:zvaios-atomicity>>) to an I/O target from the privilege level
 that executes it. The write carries a
 supervisor-controlled identifier that the executing privilege level
-cannot forge. For this reason, execution below M-mode is disabled
-until more-privileged software enables it.
+cannot forge, so execution below M-mode is disabled until
+more-privileged software enables it.
 
 [#norm:zvaios_aiose]#Execution of a ext:zvaios[] instruction at a
 privilege level below M is governed by the `AIOSE` (Atomic I/O Store
@@ -66,7 +62,7 @@ Enable) bit added to csr:menvcfg[], csr:senvcfg[], and csr:henvcfg[],
 with the same control scope over lower privilege levels as the other
 `envcfg` enable bits. When the `AIOSE` bit controlling the current
 privilege level is clear, executing a ext:zvaios[] instruction raises
-an illegal-instruction exception. However, when execution is in
+an illegal-instruction exception. When execution is in
 VS-mode or VU-mode and the controlling csr:henvcfg[] bit is clear, a
 virtual-instruction exception is raised instead.#
 
@@ -130,14 +126,13 @@ should move together.
 [#norm:zvaios_encoding_rd]#The destination register _rd_ is encoded in
 bits `[24:20]` of the instruction word, in the field position that
 carries `rs2` in other RISC-V store encodings. ext:zvaios[]
-instructions do not consume a second source operand from this field;
-the completion status word written to _rd_ is produced by the
-implementation as described in <<sec:zvaios-senqid>>.#
+instructions do not consume a second source operand from this
+field.#
 
 [#norm:zvaios_store_op]#The `vs__n__io.v` instructions read the first
 _n_ bits from the vector register group starting at _vs3_, insert a
 supervisor-controlled submission context identifier into the payload
-as described in <<sec:zvaios-senqid>>, perform an I/O-atomic store of
+(<<sec:zvaios-senqid>>), perform an I/O-atomic store of
 the resulting payload to the address in _rs1_, and write a completion
 status word to the destination register _rd_. When _rd_ is `x0`, the
 completion status word is discarded.#
@@ -268,7 +263,7 @@ reserved in the status word:#
 
 [#norm:zvaios_status_retry_nothing]#A status word of _retry_ indicates
 that no byte of the payload was delivered to the target and that the
-target's state is unchanged by the instruction. Reissuing the
+target's state is unchanged. Reissuing the
 instruction after a _retry_ status therefore submits the payload
 exactly once.#
 
@@ -302,9 +297,8 @@ location, completion format, or interconnect protocol is involved in
 producing the status word.#
 
 [#norm:zvaios_status_binding]#The status word written to _rd_
-corresponds to the specific store issued by this instruction. An
-implementation must ensure that the status word is not influenced by
-any other outstanding store or by the activity of any other hart.#
+corresponds to the specific store issued by this instruction and is
+not influenced by any other outstanding store or by any other hart.#
 
 [#norm:zvaios_status_untrusted]#The completion status word is data
 produced by the implementation in response to the target and is not a
@@ -317,7 +311,7 @@ _retry_ response are potential channels; see <<sec:zvaios-security>>.#
 [NOTE]
 ====
 Deliberately leaving the source of the status word unspecified allows
-implementations to choose from a wide range of mechanisms --- a
+implementations to choose their mechanism --- a
 completion-carrying non-posted write, a response-channel code on an
 on-chip interconnect, an implementation-private status path, or
 status synthesized from an error-tracking structure --- without any
@@ -334,10 +328,10 @@ store: the completion status word is discarded once the atomicity
 guarantee is in place.
 
 Software may still follow the common pattern of reading a
-device-specific status register, located at some offset from the
-submission portal, after the store. This is done with an ordinary
-load instruction, with a insn:fence[] between the store and the load
-if the device requires one. There is no architectural atomicity
+device-specific status register, at an offset from the submission
+portal, after the store, using an ordinary load, with a insn:fence[]
+between the store and the load if the device requires one. There is
+no architectural atomicity
 guarantee between the ext:zvaios[] store and a subsequent ordinary
 load; drivers that require any such guarantee must rely on the
 completion status word in _rd_ rather than on a follow-up load.
@@ -421,7 +415,7 @@ with the current context, which changes on every context switch, and
 the descriptor layout of the target device, which changes only when
 the target device changes and is typically fixed for the lifetime of
 a driver binding. In the common case, csr:senqfmt[] is written once
-at driver initialization time, and csr:senqid[] is updated on every
+at driver initialization, and csr:senqid[] is updated on every
 context switch.
 
 The insertion position and width are configurable because descriptor
@@ -448,7 +442,7 @@ device-defined context identifiers.
 privilege mode below M uses `senqid[31:0]` as the submission context
 identifier value and csr:senqfmt[] as the insertion format. A
 ext:zvaios[] instruction executing in M-mode performs no insertion:
-its payload is delivered unmodified, exactly as if `length` were zero.
+its payload is delivered unmodified, as if `length` were zero.
 The instruction has no operand for overriding either the identifier
 value or the insertion format. Supervisor software that needs to
 submit on behalf of a different context therefore saves, writes, and
@@ -495,14 +489,14 @@ from submitting under an established identifier.#
 format CSR is non-zero, the hardware, before the store is issued to
 the I/O system, replaces bits `[shift + length - 1 : shift]` of the
 store payload with bits `[length - 1 : 0]` of the identifier value
-selected as described in <<sec:zvaios-senqid>>. All other bits of the
+(<<sec:zvaios-senqid>>). All other bits of the
 store payload are taken unchanged from the vector register group.#
 
 [#norm:zvaios_payload_nop]#If the `length` field of the applicable
 format CSR is zero, no insertion is performed; the store payload is
-delivered to the I/O system unmodified, exactly as read from the
+delivered to the I/O system unmodified, as read from the
 vector register group. The value of the `shift` field and the contents
-of the identifier value CSR are ignored in this case.#
+of the identifier value CSR are ignored.#
 
 [NOTE]
 ====
@@ -575,9 +569,7 @@ above.#
 NOTE: The definitions above are stated in terms of what an observer
 can observe, rather than in terms of a bus transaction, because the
 interconnect between a hart and an I/O target is not architecturally
-visible. On most implementations the guarantee is achieved by
-conveying the payload as a single indivisible bus transaction, but
-any mechanism with the same observable behavior is permitted.
+visible.
 
 ===== Commitment for Delivery
 
@@ -650,15 +642,6 @@ target, and to every observer, whether the target is reached via a
 coherent interconnect, a non-coherent I/O interconnect, or a
 combination of the two.#
 
-[NOTE]
-====
-The I/O-atomic delivery concept is new to this extension. It is not
-defined by the RISC-V memory model (RVWMO), which explicitly does not
-formalize the interaction of the memory model with I/O memory. If and
-when RVWMO is extended to cover I/O operations, the definition in this
-section may be replaced by a reference to <<memorymodel>>.
-====
-
 [[sec:zvaios-io]]
 ==== I/O Classification and Ordering
 
@@ -669,7 +652,7 @@ address in a main-memory region raises a store/AMO access-fault
 exception, regardless of the other attributes of that region.#
 
 [#norm:zvaios_io_writes]#ext:zvaios[] instructions are classified as
-I/O writes for the purposes of ordering as defined by the insn:fence[]
+I/O writes for ordering as defined by the insn:fence[]
 instruction (<<base>>). They are ordered with respect to other I/O
 writes by the `PO` and `SO` predecessor and successor bits of
 insn:fence[], and with respect to other memory writes according to the
@@ -692,8 +675,7 @@ bits to coherent main memory would have to be defined as a single
 store memory operation under RVWMO, and on typical implementations
 it would require single-copy atomicity across multiple cache lines.
 Both are substantial obligations that lie outside the scope of this
-extension. The exclusion also keeps the I/O-atomic delivery concept
-self-contained in this chapter. A future extension may add a
+extension. A future extension may add a
 main-memory target class by defining such a store as a single memory
 operation in <<memorymodel>>; nothing in this chapter prevents that
 addition.
@@ -703,7 +685,7 @@ addition.
 ==== Exceptions
 
 [#norm:zvaios_exceptions]#ext:zvaios[] instructions may raise the
-following exceptions, in the order of precedence listed below:#
+following exceptions, in order of precedence:#
 
 . [#norm:zvaios_exc_illegal]#_Illegal instruction_ is raised if:#
 .. [#norm:zvaios_exc_notimpl]#the ext:zvaios[] extension is not
