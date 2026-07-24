@@ -113,7 +113,8 @@ include::images/wavedrom/vs-n-io-v.edn[]
 
 [NOTE]
 ====
-The `mew=1`, `width=111` encoding space of the STORE-FP and LOAD-FP
+*[ARC review for fast-track status]* The `mew=1`, `width=111`
+encoding space of the STORE-FP and LOAD-FP
 major opcodes is shared with the tile load and store instructions of
 the proposed integrated matrix extension. Those instructions use
 `mop=00` and `mop=01`; ext:zvaios[] uses `mop=11`; `mop=10` is
@@ -403,7 +404,8 @@ the csr:vsenqfmt[] CSR is a virtual-supervisor read-write register
 that shadows csr:senqfmt[] when `V=1`, following the shadowing
 mechanism defined in <<hypervisor>>.#
 
-The CSR address assignments and ext:smstateen[] bit positions are to
+*[To be allocated]* The CSR address assignments and ext:smstateen[]
+bit positions are to
 be allocated in the privileged architecture. A summary of the
 required changes is provided in <<appendix:zvaios-priv>>.
 
@@ -428,7 +430,8 @@ configurable format serves descriptor layouts that have not yet been
 standardized. A `length` of 0 disables insertion for targets that
 need none.
 
-The 32-bit architectural width of the identifier value matches the
+*[ARC review for fast-track status]* The 32-bit architectural width
+of the identifier value matches the
 width of existing hardware-injected context fields in comparable
 extensions, such as the 20-bit PASID field in PCIe SIOV and the
 32-bit source of ARM `ACCDATA_EL1`. A single 32-bit CSR width, used
@@ -472,8 +475,10 @@ csr:senqid[] and csr:senqfmt[] from privilege levels below M. When
 the bit is clear, access to either CSR from the affected privilege
 level raises an illegal-instruction exception. A corresponding
 csr:hstateen0[] bit enables access from VS-mode when the Hypervisor
-extension is implemented. The specific bit assignment is to be
-allocated in <<smstateen>>.#
+extension is implemented.#
+
+*[To be allocated]* The specific bit assignment is to be allocated
+in <<smstateen>>.
 
 [#norm:zvaios_smstateen_scope]#The ext:smstateen[] bits control
 explicit accesses to csr:senqid[] and csr:senqfmt[], not the implicit
@@ -941,7 +946,8 @@ traffic where the facility is exposed more widely.
 [[sec:zvaios-rationale]]
 ==== Rationale (Non-Normative)
 
-This section is included only for the fast-track proposal. When the
+*[ARC review for fast-track status]* This section is included only
+for the fast-track proposal. When the
 extension is integrated into the final specification, it is to be
 moved to the Historical Rationale appendix (<<app:rationale>>).
 
@@ -999,7 +1005,8 @@ Policy.
 [[sec:zvaios-prior-art]]
 ==== Prior Art (Non-Normative)
 
-This section is included only for the fast-track proposal, as review
+*[ARC review for fast-track status]* This section is included only
+for the fast-track proposal, as review
 evidence. It is to be dropped when the extension is integrated into
 the final specification.
 
@@ -1181,7 +1188,8 @@ atomic store rather than to a channel program.
 [[appendix:zvaios-priv]]
 ==== Required Changes to the Privileged Architecture (Non-Normative)
 
-This section summarizes the coordinated changes required in the
+*[ARC review for fast-track status]* This section summarizes the
+coordinated changes required in the
 privileged-architecture chapters of this manual to support the
 ext:zvaios[] extension. It is included in this chapter as a reviewer
 aid during fast-track review. Once ratified, each item becomes a
