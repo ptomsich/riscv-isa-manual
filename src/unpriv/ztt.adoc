@@ -307,12 +307,22 @@ No operand occupies more than four registers.#
 
 Matrix multiplies do not read or write the storage forms.
 
+[#norm:Ztt_acc_pair]#An accumulator of a 64-bit datatype occupies an _accumulator pair_, two consecutive accumulator registers of which the first has an even register number, and holds an _N_ {times} _N_ matrix of 64-bit elements.
+The even register holds columns 0 to _N_/2 − 1, and the odd register columns _N_/2 to _N_ − 1.
+In each register, 64-bit element (_r_, _c_) of its _N_ {times} _N_/2 matrix occupies 32-bit elements (_r_, 2__c__), which holds the low half, and (_r_, 2__c__ + 1).#
+[#norm:Ztt_acc_pair_align]#An instruction that names an accumulator pair whose first register number is odd raises an illegal-instruction exception.#
+In assembly, a pair is named by its first register, as in `acc2.fp64`.
+
+Only the 64-bit accumulation extensions (<<ztt-ext-acc64>>) define 64-bit accumulator datatypes.
+
 [[ztt-register-images]]
 ==== Whole-Register Images
 
 [#norm:Ztt_mreg_image]#The image of a matrix register is its 2__N__^2^ bytes, row 0 first.#
 [#norm:Ztt_acc_image]#The image of an accumulator register is its _N_^2^ 32-bit elements in row-major order, each in little-endian byte order.#
 [#norm:Ztt_image_arch]#Images are independent of how an implementation stores registers internally; whole-register loads and stores transfer them unchanged.#
+
+The image of each register of an accumulator pair is therefore its _N_ {times} _N_/2 64-bit elements in row-major order, each in little-endian byte order.
 
 NOTE: The images are architectural so that debuggers, and contexts migrated between harts with the same _N_, observe the same bytes on every implementation.
 
@@ -364,7 +374,7 @@ Their encodings are 32-bit (<<ztt-encoding-32>>), except for the partial-tile fo
 |`e8` |8 bits |yes |yes
 |`e16` |16 bits |yes |yes
 |`e32` |32 bits |yes |yes
-|`e64` |64 bits |yes |_reserved_
+|`e64` |64 bits |yes |pairs only
 |===
 
 [#norm:Ztt_ls_p6]#`p6` transfers 6-bit elements stored four in three bytes in memory, element _k_ of a row occupying bits 6__k__ + 5 to 6__k__ of the row, numbering the bits of a row from bit 0 of its first byte; in a matrix register each element occupies an 8-bit container as in <<ztt-fp-formats>>.#
@@ -389,6 +399,8 @@ There is no stacked store.#
 
 [#norm:Ztt_ls_acc]#The accumulator forms, insn:mla.st[], insn:msa.st[], insn:mla.tst[], and insn:msa.tst[], transfer an accumulator register as the strided and transposing forms do, with element sizes of 8, 16, and 32 bits.
 A load of a narrower element size writes the low bits of each 32-bit element and zeroes the others; a store writes the low bits.#
+[#norm:Ztt_ls_acc64]#With element size `e64`, the accumulator forms transfer an accumulator pair as an _N_ {times} _N_ matrix of 64-bit elements.
+They are reserved unless a 64-bit accumulation extension (<<ztt-ext-acc64>>) is implemented.#
 
 NOTE: A row-major matrix and the transpose of a column-major matrix load with the strided form.
 
@@ -522,7 +534,7 @@ Restarting a store rewrites the elements written before the exception with the s
 [[ztt-naming]]
 ==== Naming Conventions
 
-// Naming and dependencies, in the manner of the Zvvm tables.
+Extensions that add matrix-multiply datatype combinations are named `Ztt` + _input type_ + _output type_ + `mm`, with the type tokens of ext:zvvmm[]; the output type is omitted when it equals the input type.
 
 [[ext:ztt]]
 ==== ext:ztt[] Attached Matrix Extension
@@ -533,12 +545,30 @@ Restarting a store rewrites the elements written before the exception with the s
 // and Included-in references:
 // - mixed-width matrix multiply: sources of different element widths, the narrower
 //   source using the smaller register group so that both have the same K;
-// - 64-bit accumulation: FP64 and INT64 accumulator datatypes held in aligned
-//   accumulator pairs split by column, e64 accumulator loads and stores
-//   (FP64 x FP64, FP32 x FP32 -> FP64; INT16 x INT16 -> INT64);
 // - block-scaled matrix multiply (decision 14);
 // - quantization primitives (decision 15);
 // - row moves to and from V, requiring a vector extension (decision 16).
+
+[[ztt-ext-acc64]]
+==== 64-Bit Accumulation Extensions
+
+[#norm:Ztt_ext_acc64]#Each extension in <<ztt-acc64-table>> adds its datatype combinations to insn:mmacc[] and insn:mmacc.n[].
+Implementing any of them adds accumulator pairs (<<ztt-acc-layout>>) and the `e64` accumulator loads and stores (<<ztt-memory-addressing>>).#
+
+[[ztt-acc64-table]]
+.64-bit accumulation extensions.
+[%autowidth,float="center",align="center",cols="<,<,<,<",options="header"]
+|===
+|Extension |Dependencies |A and B |C
+|Zttfp64mm |ext:ztt[] |FP64 |FP64
+|Zttfp32fp64mm |ext:ztt[] |TF32, FP32 |FP64
+|Ztti16i64mm |ext:ztt[] |INT16, UINT16 |INT64, UINT64
+|===
+// OPEN: whether Zttfp64mm and Zttfp32fp64mm depend on D, as Ztt's floating-point
+// support depends on F (open for the base extension).
+
+NOTE: The extensions are separate so that an implementation can provide FP64 matrix multiplication without 64-bit integer accumulation, or the reverse.
+Accumulator registers stay 32 bits wide, so an implementation of any of them keeps all _R_ accumulators for the other datatypes.
 
 [[ztt-ops]]
 === Instruction Groups
@@ -588,7 +618,7 @@ Other combinations raise an illegal-instruction exception unless an extension su
 |TF32, FP32 |FP32
 |===
 
-[#norm:Ztt_mmacc_int]#For integer datatypes, C is replaced by the exact sum of C and the products, reduced modulo 2^32^; `rm` and `sat` values other than 0 are reserved.#
+[#norm:Ztt_mmacc_int]#For integer datatypes, C is replaced by the exact sum of C and the products, reduced modulo 2^__n__^, where _n_ is the width of the datatype of C; `rm` and `sat` values other than 0 are reserved.#
 [#norm:Ztt_mmacc_fp]#For floating-point datatypes, C is computed as specified in <<ztt-matmul-numerics>>, with saturation as selected by `sat` (<<ztt-saturation>>).#
 
 [#norm:Ztt_mzero]#insn:mzero[] writes zero to every element of an accumulator register.#
@@ -611,9 +641,9 @@ The supported combinations are those of a single input width that machine-learni
 |INT4 {times} INT8 → INT32 |4-bit weights, 8-bit activations |Mixed-width extension
 |INT2 {times} INT8 → INT32 |Ternary weights, 8-bit activations |Mixed-width extension
 |E2M1 {times} E4M3 → FP32 |FP4 weights, FP8 activations |Mixed-width extension
-|FP64 {times} FP64 → FP64 |Double-precision GEMM |64-bit accumulation extension
-|FP32 {times} FP32 → FP64 |Mixed-precision solvers |64-bit accumulation extension
-|INT16 {times} INT16 → INT64 |Ozaki-scheme variants |64-bit accumulation extension
+|FP64 {times} FP64 → FP64 |Double-precision GEMM |Zttfp64mm
+|FP32 {times} FP32 → FP64 |Mixed-precision solvers |Zttfp32fp64mm
+|INT16 {times} INT16 → INT64 |Ozaki-scheme variants |Ztti16i64mm
 |INT4 or FP8 {times} BF16 → FP32 |Weight-only quantization |None: needs per-group scales
 |===
 
