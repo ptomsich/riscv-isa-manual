@@ -1,0 +1,247 @@
+[[ztt-family]]
+== Ztt Family of Attached Matrix Extensions
+
+The Ztt family of attached matrix extensions accelerates matrix multiplication and the surrounding elementwise, conversion, and reduction operations for machine-learning and high-performance computing workloads.
+An attached matrix unit has its own architectural tile registers and is operated on by instructions in the hart's instruction stream, in program order.
+The extensions do not depend on the vector extensions.
+
+// Scope: what the family is, what it is not (no new vector state, no dependency on V),
+// and its dependency on the 64-bit encoding of the long-instruction extension (Zl).
+// One paragraph per point; normative statements tagged Ztt_*.
+
+[NOTE]
+====
+// Rationale: datatypes are a property of the instruction; registers are untyped
+// containers; geometry is the only implementation parameter visible to software.
+====
+
+[[ztt-params]]
+=== Implementation-defined Constant Parameters
+
+// The tile side N (via AME_NELEM) is the only parameter; it scales element counts,
+// never register numbers.
+// Permitted values of N and the minimum per register model (decision 17).
+// The unit datatype size is an architectural constant, not a parameter.
+// OPEN (decision 1, 5): unit datatype size fixed at 32 bits (Model A) or 16 bits (Model B).
+
+[[ztt-model]]
+=== Attached Matrix Programmer's Model
+
+// Informative overview: tiles, the tile side N, operand and accumulator roles,
+// a matrix multiply as C += A x B, and how a kernel is written once for all N.
+
+[[ztt-mregs]]
+==== Matrix Registers
+
+// m0-m31, all 32 mandatory; each holds N x N elements of the unit datatype size.
+
+[[ztt-accregs]]
+==== Accumulator Registers
+
+// OPEN (decision 5, 6): present only under Model B, with a fixed count of 16 or 32.
+// Under Model A this section is removed and matrix multiplies accumulate into m registers.
+
+[[ztt-mstatus]]
+==== Matrix Context Status in csr:mstatus[]
+
+// mstatus.MS and its sstatus view, in the manner of mstatus.VS.
+// Context management, save and restore, and virtualization are specified by
+// ext:ssttctx[] in the privileged architecture; this chapter only refers to them.
+
+[[ztt-vsstatus]]
+==== Matrix Context Status in csr:vsstatus[]
+
+// vsstatus.MS under the hypervisor extension, in the manner of vsstatus.VS.
+
+[[ztt-amenlen]]
+==== Tile Geometry (csr:amenlen[]) Register
+
+// Read-only; reports the tile geometry.
+
+[[ztt-amefflags]]
+==== Matrix Accrued Exceptions (csr:amefflags[]) Register
+
+// Accrued floating-point exceptions, and the interaction with frm and fflags (decision 10).
+
+[[ztt-amexsat]]
+==== Matrix Saturation Flag (csr:amexsat[]) Register
+
+[[ztt-reset]]
+==== State of the Attached Matrix Extensions at Reset
+
+[[ztt-datatypes]]
+=== Datatypes
+
+[[ztt-type-codes]]
+==== Type Codes
+
+// The 5-bit type code table: positional integer codes, enumerated floating-point codes,
+// reserved codes for future standard types; no custom types (decision 3).
+
+[[ztt-fp-formats]]
+==== Floating-Point Formats
+
+// Subnormals honored, no flush-to-zero; 6-bit formats in 8-bit containers; tf32 as a source-only type;
+// E8M0; NaN and infinity handling per format.
+
+[[ztt-specifiers]]
+==== Operand Specifiers
+
+// Destination specifier (type, rounding, saturation: 9 bits) and source specifier (type: 5 bits).
+
+[[ztt-rounding]]
+==== Rounding Modes
+
+// Integer: RNU, RNE, RDN, ROD; RTZ, RUP, and RMM subject to decision 18.
+// Floating point: RNE, RTZ, RDN, RUP, RMM, round to odd, dynamic (from frm).
+
+[[ztt-operands]]
+=== Mapping of Matrix Elements to Register State
+
+// Unit, packed, and wide operands; pack factor and group size from the operand's own type;
+// the four-register span bound; alignment of register groups (decision 4).
+// All spans and legality checks are functions of the encoding.
+
+[[ztt-unit-operands]]
+==== Unit Operands
+
+[[ztt-packed-operands]]
+==== Packed Operands
+
+// Pack factor; packed sources extend the inner dimension K of a matrix multiply.
+
+[[ztt-wide-operands]]
+==== Wide Operands and Register Groups
+
+[[ztt-register-images]]
+==== Whole-Register Images
+
+// The architectural whole-register image, including packed slots and wide groups,
+// independent of the internal layout of an implementation.
+
+[[ztt-encoding]]
+=== Attached Matrix Instruction Formats
+
+[[ztt-encoding-32]]
+==== 32-Bit Instructions
+
+// Untyped instructions in OP-VE with funct3 = 100: memory with the element size in the
+// encoding, whole-register moves, zeroing, element and row moves (decision 2).
+// The same space holds the context-management instructions of ext:ssttctx[], which are
+// specified in the privileged architecture; this section only reserves their encodings.
+
+[[ztt-encoding-64]]
+==== 64-Bit Instructions
+
+// Typed instructions in the Zl 64-bit encoding: the first word carries md, ms1, ms2 and the
+// operation; the second word carries the three operand specifiers and format-specific fields.
+// OPEN: depends on Zl defining its 64-bit format and granting a major opcode.
+
+[[ztt-legality]]
+==== Supported Type Combinations and Illegal Instructions
+
+// An unsupported operation and type combination raises an illegal-instruction exception.
+// The mandatory baseline set of combinations (decision 8).
+
+[[ztt-memory]]
+=== Matrix Loads and Stores
+
+// Row-major, column-major, strided, and transposed-strided layouts; whole-register transfers;
+// partial-tile forms with row and column counts from X registers (decision 13).
+
+[[ztt-memory-encoding]]
+==== Load/Store Encoding and Element Sizes
+
+[[ztt-memory-addressing]]
+==== Addressing Modes
+
+[[ztt-memory-partial]]
+==== Partial-Tile Loads and Stores
+
+[[ztt-memory-whole]]
+==== Whole-Register Loads and Stores
+
+[[ztt-memory-alignment]]
+=== Matrix Memory Alignment Constraints
+
+[[ztt-memory-model]]
+=== Matrix Memory Consistency Model
+
+// Memory ordering under RVWMO and Ztso, and any deviation from it, as the charter requires.
+
+[[ztt-arith]]
+=== Arithmetic Considerations
+
+[[ztt-arith-int]]
+==== Integer Arithmetic
+
+// One rounding from the exact result to the destination type; wraparound and saturation.
+
+[[ztt-arith-fp]]
+==== Floating-Point Arithmetic
+
+// One rounding from the exact result; floating-point exceptions and amefflags; NaNs.
+
+[[ztt-matmul-numerics]]
+==== Matrix-Multiply Numerics
+
+// The defined product precision and accumulation order for standard combinations,
+// or a selectable fused mode (decision 9).
+
+[[ztt-exceptions]]
+=== Exception Handling
+
+// Precise traps; restart of partially completed loads and stores.
+
+[[ztt-extensions]]
+=== Extensions in the Ztt Family
+
+[[ztt-naming]]
+==== Naming Conventions
+
+// Naming and dependencies, in the manner of the Zvvm tables.
+
+[[ext:ztt]]
+==== ext:ztt[] Attached Matrix Extension
+
+// The base extension: the instructions it includes and its dependencies.
+
+// Candidate subextensions, one subsection each with dependencies, instruction list,
+// and Included-in references:
+// - block-scaled matrix multiply (decision 14);
+// - quantization primitives (decision 15);
+// - row moves to and from V, requiring a vector extension (decision 16).
+
+[[ztt-ops]]
+=== Instruction Groups
+
+// One informative overview subsection per group, pointing at the instruction pages:
+// matrix multiply, elementwise arithmetic, compares and bitwise operations, conversions,
+// packing and unpacking, reductions and broadcasts, data movement.
+
+[[ztt-insns]]
+=== Instructions (in alphabetical order)
+
+// One file per instruction in ztt-insns/, named after the mnemonic with dots replaced
+// by hyphens (mmulacc.2d -> ztt-insns/mmulacc-2d.adoc), and included here in
+// alphabetical order of mnemonic:
+//
+// include::ztt-insns/<mnemonic>.adoc[]
+//
+// Each file holds one page at heading level 4, in the form of the other
+// unprivileged chapters:
+//
+// <<<
+// [#insns-<mnemonic>,reftext="..."]
+// ==== insn:<mnemonic>[]
+// Synopsis, Mnemonic, Encoding, Description, Exceptions, Included in, SAIL code
+//
+// and tags at least the normative rules <mnemonic>_op and <mnemonic>_enc.
+
+[[ztt-encoding-map]]
+=== Encoding Map
+
+// Normative encoding tables for the 32-bit and 64-bit forms, and the table of
+// legal type combinations per operation.
+
+//
