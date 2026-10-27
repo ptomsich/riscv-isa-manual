@@ -18,80 +18,111 @@ The extensions do not depend on the vector extensions.
 [[ztt-params]]
 === Implementation-defined Constant Parameters
 
-// The tile side N (via AME_NELEM) is the only parameter; a register holds N x N
-// elements of the unit datatype size. N scales element counts and the K of a matrix
-// multiply, never register numbers or the footprint (packed, unit, wide) of a type.
-// Tiles are square; rows and row length are not scaled independently.
-// Permitted values of N and the minimum per register model (decision 17).
-// The unit datatype size is an architectural constant, not a parameter (decision 1).
-// OPEN (decision 5): its value, 32 bits (Model A) or 16 bits (Model B).
+[#norm:Ztt_N]#Each hart that implements a Ztt extension defines one parameter, the tile side _N_, which must be a multiple of 4.#
+// OPEN (decision 17): the minimum N.
+
+_N_ sets the number of elements a register holds and the inner dimension of a matrix multiply.
+It does not change which registers an operand occupies.
+
+NOTE: A row of packed 6-bit elements (four in three bytes) or of 2-bit elements (four per byte) is a whole number of bytes only when _N_ is a multiple of 4.
+
+Ztt supports binary code that executes on harts with different values of _N_, provided the harts support the datatypes and instructions it uses.
+
+NOTE: Thread contexts with live Ztt state cannot be migrated between harts with different values of _N_.
 
 [[ztt-model]]
 === Attached Matrix Programmer's Model
 
-// Informative overview: tiles, the tile side N, operand and accumulator roles,
-// a matrix multiply as C += A x B, and how a kernel is written once for all N.
+[#norm:Ztt_state]#Ztt adds to each hart 32 matrix registers, `m0` to `m31`, _R_ accumulator registers, `acc0` to ``acc``__R__``−1``, and the read-only CSR csr:amenlen[].#
+A matrix multiply reads its operands from matrix registers and accumulates into an accumulator register; the other operations read and write matrix registers.
 
 [[ztt-mregs]]
 ==== Matrix Registers
 
-// m0-m31, all 32 mandatory; each holds N x N elements of the unit datatype size.
+[#norm:Ztt_mreg]#Each matrix register holds _N_ {times} _N_ 16-bit elements.#
+<<ztt-operands>> describes how operands of other widths occupy matrix registers.
 
 [[ztt-accregs]]
 ==== Accumulator Registers
 
-// OPEN (decision 5, 6): present only under Model B, with a fixed count of 16 or 32.
-// Under Model A this section is removed and matrix multiplies accumulate into m registers.
+[#norm:Ztt_accreg]#Each accumulator register holds _N_ {times} _N_ 32-bit elements.#
+[#norm:Ztt_R]#The number of accumulator registers, _R_, is fixed by this specification.#
+// OPEN (decision 6): R = 16 or 32; the evaluation also covers R = 4.
 
 [[ztt-mstatus]]
-==== Matrix Context Status in csr:mstatus[]
+==== Ztt Context Status in csr:mstatus[]
 
-// mstatus.MS and its sstatus view, in the manner of mstatus.VS.
-// Context management, save and restore, and virtualization are specified by
-// ext:ssttctx[] in the privileged architecture; this chapter only refers to them.
+[#norm:Ztt_mstatus_ts]#A Ztt context-status field, csr::[ts], is added to csr:mstatus[][26:25] and shadowed in csr:sstatus[][26:25].
+It is defined analogously to the floating-point context-status field, csr::[fs].#
+// TS (tile status); MS is used by Zvt.
+
+[#norm:Ztt_mstatus_ts_off]#Attempts to execute any Ztt instruction, or to access csr:amenlen[], raise an illegal-instruction exception when csr:mstatus[ts] is Off.#
+
+[#norm:Ztt_mstatus_ts_dirty]#When csr:mstatus[ts] is Initial or Clean, executing any instruction that changes Ztt state changes csr:mstatus[ts] to Dirty.
+Implementations may also change csr:mstatus[ts] from Initial or Clean to Dirty at any time, even when Ztt state does not change.#
+
+[#norm:Ztt_mstatus_sd]#If csr:mstatus[ts] is Dirty, csr:mstatus[sd] is 1; otherwise, csr:mstatus[sd] is set in accordance with existing specifications.#
 
 [[ztt-vsstatus]]
-==== Matrix Context Status in csr:vsstatus[]
+==== Ztt Context Status in csr:vsstatus[]
 
-// vsstatus.MS under the hypervisor extension, in the manner of vsstatus.VS.
+[#norm:Ztt_vsstatus_ts]#When the hypervisor extension is present, a Ztt context-status field, csr::[ts], is added to csr:vsstatus[][26:25].
+It is defined analogously to the floating-point context-status field, csr::[fs].#
+
+[#norm:Ztt_vsstatus_ts_off]#When V=1, both csr:vsstatus[ts] and csr:mstatus[ts] are in effect: attempts to execute any Ztt instruction, or to access csr:amenlen[], raise an illegal-instruction exception when either field is Off.#
+
+[#norm:Ztt_vsstatus_ts_dirty]#When V=1 and neither csr:vsstatus[ts] nor csr:mstatus[ts] is Off, executing any instruction that changes Ztt state changes both fields to Dirty.
+Implementations may also change csr:mstatus[ts] or csr:vsstatus[ts] from Initial or Clean to Dirty at any time, even when Ztt state does not change.#
+
+[#norm:Ztt_vsstatus_sd]#If csr:vsstatus[ts] is Dirty, csr:vsstatus[sd] is 1; otherwise, csr:vsstatus[sd] is set in accordance with existing specifications.#
+
+Context management, including saving, restoring, and virtualizing Ztt state, is specified by ext:ssttctx[].
+
+[[ztt-discard]]
+==== Context Discard
+
+[#norm:Ztt_mdiscard]#The insn:mdiscard[] instruction raises an illegal-instruction exception if csr:mstatus[ts] is Off, or, when V=1, if csr:vsstatus[ts] is Off.
+Otherwise, it sets csr:mstatus[ts] to Initial, and, when V=1, csr:vsstatus[ts].#
+[#norm:Ztt_mdiscard_state]#After insn:mdiscard[], the contents of all `m` and `acc` registers are UNSPECIFIED.#
+
+NOTE: insn:mdiscard[] need not write the registers.
+Software executes it where its use of Ztt state ends, so that the state is not saved on a context switch and an implementation can reclaim its storage.
 
 [[ztt-amenlen]]
-==== Tile Geometry (csr:amenlen[]) Register
+==== Tile Side (csr:amenlen[]) Register
 
-// Read-only; reports the tile geometry.
+[#norm:Ztt_amenlen]#The _XLEN_-bit-wide read-only CSR csr:amenlen[] holds _N_.#
+// OPEN: CSR address, in the unprivileged read-only range next to vlenb.
+
+NOTE: The value in csr:amenlen[] is a design-time constant in any implementation.
 
 [[ztt-fcsr]]
 ==== Floating-Point Exception Flags and Rounding Mode
 
-// Ztt adds no accrued-exception or rounding-mode state of its own (decision 10).
-// Floating-point exceptions raised by Ztt instructions accrue into fflags, as those of
-// the vector floating-point instructions do; the dynamic rounding code reads frm.
-// Consequences: a Ztt instruction that names a floating-point type accesses
-// floating-point state, so it raises an illegal-instruction exception when mstatus.FS
-// is Off and sets FS to Dirty whether or not it raises a flag (flags may arrive after
-// the instruction has retired); both are known at decode from the type codes.
-// OPEN: dependency of the floating-point types on F or Zfinx (cf. Zve32f).
+[#norm:Ztt_fflags]#Floating-point exceptions raised by Ztt instructions accrue in csr:fflags[], and the DYN rounding mode is that in csr:frm[].#
+Ztt has no exception-flag or rounding-mode state of its own.
 
-[NOTE]
-====
-Reporting floating-point exceptions through csr:fflags[] does not prevent an
-implementation from executing Ztt instructions in a matrix unit that is decoupled from
-the hart, and that completes them after the hart has retired them.
-The flags are accrued and never cause a trap, so they can be merged into csr:fflags[]
-when the matrix unit completes an instruction, in any order.
-Only an instruction that accesses csr:fflags[] or csr:fcsr[] can observe the difference.
-A CSR instruction that reads csr:fflags[] or csr:fcsr[] must observe the flags of all
-older Ztt instructions, and one that writes them must not be overtaken by those flags;
-an implementation may satisfy both by waiting for older Ztt instructions to complete
-before executing such a CSR instruction.
-No other instruction needs to wait.
-The dynamic rounding mode can be read from csr:frm[] when the hart issues a Ztt
-instruction and passed to the matrix unit with it, so writes to csr:frm[] need not wait.
-Decoupled implementations of the vector extension face the same requirements.
-====
+[#norm:Ztt_fs]#For the purposes of csr:mstatus[fs] and csr:vsstatus[fs], a Ztt instruction that names a floating-point datatype is a floating-point instruction that writes csr:fflags[].#
+// OPEN: dependency of the floating-point datatypes on F or Zfinx (cf. Zve32f).
+
+NOTE: A matrix unit that completes Ztt instructions after the hart has retired them can merge their flags into csr:fflags[] late and in any order, because accrued flags never trap.
+Only accesses to csr:fflags[] and csr:fcsr[] must be ordered with older Ztt instructions: a read must observe their flags, and a write must not be overtaken by them, which an implementation may ensure by waiting for them to complete.
+csr:frm[] can be read when an instruction issues.
+Decoupled vector implementations face the same requirement.
+
+[[ztt-zvt]]
+==== Coexistence with Zvt
+
+[#norm:Ztt_Zvt_disjoint]#Ztt state and Zvt tile state are disjoint: no Ztt instruction reads or writes Zvt tile state, and no Zvt instruction reads or writes Ztt state.#
+Each has its own context-status field.
+
+NOTE: An implementation may share physical storage between the two, but must preserve both while both are live, for example by spilling one.
+A context status of Initial indicates that the corresponding state need not be preserved.
 
 [[ztt-reset]]
-==== State of the Attached Matrix Extensions at Reset
+==== State at Reset
+
+[#norm:Ztt_reset]#The matrix and accumulator registers can have arbitrary values at reset.#
 
 [[ztt-datatypes]]
 === Datatypes
@@ -117,21 +148,21 @@ Floating-point type codes have bit 4 set and are enumerated.
 |`0x06` / `0x07` |INT16 / UINT16 |`int16` / `uint16` |16 bits
 |`0x08` / `0x09` |INT32 / UINT32 |`int32` / `uint32` |32 bits
 |`0x0a` / `0x0b` |INT64 / UINT64 |`int64` / `uint64` |64 bits
-|`0x0c`{endash}`0x0f` 3+|_Reserved_
+|`0x0c` to `0x0f` 3+|_Reserved_
 |`0x10` |E2M1 |`e2m1` |4 bits
 |`0x11` |E2M3 |`e2m3` |8 bits
 |`0x12` |E3M2 |`e3m2` |8 bits
 |`0x13` |E4M3 |`e4m3` |8 bits
 |`0x14` |E5M2 |`e5m2` |8 bits
 |`0x15` |E8M0 |`e8m0` |8 bits
-|`0x16`{endash}`0x17` 3+|_Reserved_
+|`0x16` to `0x17` 3+|_Reserved_
 |`0x18` |FP16 |`fp16` |16 bits
 |`0x19` |BF16 |`bf16` |16 bits
 |`0x1a` 3+|_Reserved_
 |`0x1b` |TF32 |`tf32` |32 bits
 |`0x1c` |FP32 |`fp32` |32 bits
 |`0x1d` |FP64 |`fp64` |64 bits
-|`0x1e`{endash}`0x1f` 3+|_Reserved_
+|`0x1e` to `0x1f` 3+|_Reserved_
 |===
 
 [#norm:Ztt_type_code_rsv]#An instruction that names a reserved type code raises an illegal-instruction exception.#
@@ -159,7 +190,7 @@ The other floating-point datatypes are defined in <<ztt-fp-format-table>>.
 |TF32 |yes |8 |10 |127 |as FP32 |as FP32 |FP32 storage
 |===
 
-[#norm:Ztt_e8m0]#E8M0 encodes the power of two 2^_e_{nbsp}{minus}{nbsp}127^ for exponent field _e_ < 255; it has no zero and no subnormals.#
+[#norm:Ztt_e8m0]#E8M0 encodes the power of two 2^__e__−127^ for exponent field _e_ < 255; it has no zero and no subnormals.#
 
 [#norm:Ztt_fp6_container]#An E2M3 or E3M2 element occupies 8 bits: the value is held in bits 5:0, and bits 7:6 are written as zero and ignored when read.#
 
@@ -219,7 +250,7 @@ The floating-point encodings are those of <<norm:dyn_round_enc>>, with 101 assig
 [#norm:Ztt_sat_fp]#For a floating-point destination datatype, `sat` = 1 replaces an infinite result by the largest finite value of the same sign; with `sat` = 0 an infinite result is infinity, or the canonical NaN for a datatype without infinity.#
 Overflow raises OF and NX in either case.
 [#norm:Ztt_sat_nonan]#E2M1, E2M3, and E3M2 always saturate, and `sat` = 0 is reserved for them; a NaN converts to their largest positive finite value and raises NV.#
-[#norm:Ztt_sat_e8m0]#For E8M0, a zero, negative, or NaN value converts to `0xff` and raises NV, and a positive value that rounds below 2^{minus}127^ converts to 2^{minus}127^ and raises UF and NX.#
+[#norm:Ztt_sat_e8m0]#For E8M0, a zero, negative, or NaN value converts to `0xff` and raises NV, and a positive value that rounds below 2^−127^ converts to 2^−127^ and raises UF and NX.#
 
 Integer saturation is not reported: it is requested by the destination specifier and its result is intended, so a flag would add state to no purpose.
 
@@ -255,6 +286,7 @@ Integer saturation is not reported: it is requested by the destination specifier
 
 // Untyped instructions in OP-VE with funct3 = 100: memory with the element size in the
 // encoding, whole-register moves, zeroing, element and row moves (decision 2).
+// mdiscard is in the one-operand bank.
 // The same space holds the context-management instructions of ext:ssttctx[], which are
 // specified in the privileged architecture; this section only reserves their encodings.
 
@@ -346,6 +378,15 @@ Integer saturation is not reported: it is requested by the destination specifier
 // One informative overview subsection per group, pointing at the instruction pages:
 // matrix multiply, elementwise arithmetic, compares and bitwise operations, conversions,
 // packing and unpacking, reductions and broadcasts, data movement.
+
+[[ztt-sw]]
+=== Software Considerations
+
+[[ztt-cc]]
+==== Calling Convention
+
+All `m` and `acc` registers are caller-saved: a called function need not preserve them, as for the vector registers and the Intel AMX tile registers.
+The RISC-V psABI is the authoritative definition.
 
 [[ztt-insns]]
 === Instructions (in alphabetical order)

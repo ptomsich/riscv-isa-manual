@@ -3,8 +3,8 @@
 
 // Scope: supervisor-level management of ext:ztt[] contexts, including their
 // virtualization under the hypervisor extension.
-// The context-status field (mstatus.MS and its sstatus and vsstatus views) belongs to
-// ext:ztt[] and is specified with mstatus, sstatus, and vsstatus, not here.
+// The Ztt context-status field (mstatus[26:25] and its sstatus and vsstatus views) belongs to
+// ext:ztt[] and is specified in its programmer's model, as VS is for the vector extensions, not here.
 // Source material: backend_management.adoc and software_guidance.adoc on
 // ptomsich/ame-context-management, to be rewritten for untyped registers.
 
