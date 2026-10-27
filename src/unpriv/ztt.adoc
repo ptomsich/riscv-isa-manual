@@ -342,28 +342,121 @@ NOTE: The images are architectural so that debuggers, and contexts migrated betw
 [[ztt-memory]]
 === Matrix Loads and Stores
 
-// Row-major, column-major, strided, and transposed-strided layouts; whole-register transfers;
-// partial-tile forms with row and column counts from X registers (decision 13).
+Ztt loads and stores transfer a matrix register, a register group, or an accumulator register between memory and the hart.
+The whole-register forms transfer the register image; the other forms transfer the operand matrix (<<ztt-operands>>) row by row.
+Their encodings are 32-bit (<<ztt-encoding-32>>), except for the partial-tile forms, which use the 64-bit format (<<ztt-encoding-64>>).
 
 [[ztt-memory-encoding]]
-==== Load/Store Encoding and Element Sizes
+==== Element Sizes
+
+[#norm:Ztt_ls_esize]#Each load and store other than the whole-register forms carries its element size in its encoding.#
+
+[[ztt-esize-table]]
+.Load and store element sizes.
+[%autowidth,float="center",align="center",cols="<,<,^,^",options="header"]
+|===
+|Suffix |Element size |Matrix registers |Accumulator registers
+|`e2` |2 bits |yes |no
+|`e4` |4 bits |yes |no
+|`p6` |6 bits, packed |yes |no
+|`e8` |8 bits |yes |yes
+|`e16` |16 bits |yes |yes
+|`e32` |32 bits |yes |yes
+|`e64` |64 bits |yes |_reserved_
+|===
+
+[#norm:Ztt_ls_p6]#`p6` transfers 6-bit elements stored four in three bytes in memory, element _k_ of a row occupying bits 6__k__ + 5 to 6__k__ of the row, numbering the bits of a row from bit 0 of its first byte; in a matrix register each element occupies an 8-bit container as in <<ztt-fp-formats>>.#
+[#norm:Ztt_ls_esize_reg]#The element size determines the shape of the operand matrix and the size of the register group, as for an operand of that element width.#
 
 [[ztt-memory-addressing]]
-==== Addressing Modes
+==== Strided, Transposing, and Stacked Forms
+
+[#norm:Ztt_ls_addr]#These forms take the base address in `rs1` and the leading dimension _LD_, in elements, in `rs2`.
+They view memory as a matrix whose element (_d_, _k_) is at bit offset (_d_{nbsp}{times}{nbsp}__LD__ + _k_) {times} _w_ from the base address, where _w_ is the element size; address arithmetic is modulo 2^XLEN^.#
+
+NOTE: For elements narrower than 8 bits, a strided load or store that transfers whole rows moves the same bits as its `e8` form with _LD_ {times} _w_ / 8 as the leading dimension.
+
+[#norm:Ztt_ls_forms]#For an operand matrix element (_r_, _c_):#
+
+* [#norm:Ztt_ls_st]#The strided forms, insn:mls.st[] and insn:mss.st[], transfer memory element (_r_, _c_).#
+* [#norm:Ztt_ls_tst]#The transposing forms, insn:mls.tst[] and insn:mss.tst[], transfer memory element (_c_, _r_).
+They are reserved for element sizes below 8 bits.#
+* [#norm:Ztt_ls_sst]#The stacked form, insn:mls.sst[], views the register as a 16__N__/__w__ {times} _N_ matrix of stacked slots (<<ztt-mreg-layout>>) and loads its element (_k_, _j_) from memory element (_k_, _j_).
+It is reserved for element sizes of 16 bits and above.
+There is no stacked store.#
+
+[#norm:Ztt_ls_acc]#The accumulator forms, insn:mla.st[], insn:msa.st[], insn:mla.tst[], and insn:msa.tst[], transfer an accumulator register as the strided and transposing forms do, with element sizes of 8, 16, and 32 bits.
+A load of a narrower element size writes the low bits of each 32-bit element and zeroes the others; a store writes the low bits.#
+
+NOTE: A row-major matrix and the transpose of a column-major matrix load with the strided form.
+
+[NOTE]
+====
+The stacked form loads a row-major B for C += A {times} B when its elements are narrower than 16 bits.
+Each memory row of B lands contiguously in one slot, so no element is rearranged.
+
+Software could instead prepare such a B in memory.
+That costs nothing for data prepared once and reused, such as inference weights, or for large multiplies whose operands software packs anyway.
+It costs an extra pass over B, and a second buffer, when:
+
+* B is produced on every use, as gradients and activations are in training;
+* the multiply is bandwidth-bound, as in decoding, where B is read only once;
+* the elements are narrower than 8 bits and the hart has no vector unit, so the rearrangement runs as scalar code.
+
+A strided load followed by a register-to-register permutation is no substitute: one strided load gathers the rows of B only if they are contiguous in memory, and otherwise one load and one move are needed per slot.
+====
 
 [[ztt-memory-partial]]
-==== Partial-Tile Loads and Stores
+==== Partial-Tile Forms
+
+[#norm:Ztt_ls_partial]#Each strided, transposing, stacked, and accumulator form has a partial-tile variant that also takes a row count and a column count from X registers.
+It transfers only the elements whose row index is below the row count and whose column index is below the column count; a count at least the number of rows or columns of the operand matrix selects all of them.#
+[#norm:Ztt_ls_partial_load]#A partial-tile load writes zero to the elements it does not transfer.#
+[#norm:Ztt_ls_partial_store]#A partial-tile store does not access memory for the elements it does not transfer.#
+
+NOTE: Zero-filled columns contribute nothing to a matrix multiply, so a partial-tile load pads an edge tile, or a short inner dimension, without a separate clearing step.
 
 [[ztt-memory-whole]]
-==== Whole-Register Loads and Stores
+==== Whole-Register Forms
+
+[#norm:Ztt_ls_whole]#insn:mls.1r[] and insn:mss.1r[] transfer the image of one matrix register, 2__N__^2^ bytes, between the register and consecutive bytes starting at the address in `rs1`.
+insn:mla.1r[] and insn:msa.1r[] do the same for the image of an accumulator register, 4__N__^2^ bytes.#
 
 [[ztt-memory-alignment]]
 === Matrix Memory Alignment Constraints
 
+[#norm:Ztt_ls_align]#Each element of 8 bits or more accessed by a Ztt load or store must be naturally aligned to its size.
+For smaller elements, each row must begin at a byte boundary, so _LD_ {times} _w_ must be a multiple of 8.
+Otherwise, the instruction raises an address-misaligned exception.#
+[#norm:Ztt_ls_align_whole]#The whole-register forms have no alignment requirement beyond bytes.#
+
 [[ztt-memory-model]]
 === Matrix Memory Consistency Model
 
-// Memory ordering under RVWMO and Ztso, and any deviation from it, as the charter requires.
+The memory operations of a hart form two streams: the _Ztt stream_, made of the memory operations of Ztt instructions, and the _hart stream_, made of all its other memory operations, including vector loads and stores, AMOs, LR/SC, and cache-management operations.
+
+[#norm:Ztt_mm_within]#Within the Ztt stream, memory operations are ordered as by RVWMO at the instruction level, and, if the ext:ztso[] extension is implemented, by RVTSO at the instruction level.#
+[#norm:Ztt_ls_unordered]#Element accesses are unordered within an instruction.#
+[#norm:Ztt_ls_partial_ctrl]#Partial-tile forms have a control dependency on their row and column counts, rather than a data dependency.#
+
+[#norm:Ztt_mm_across]#A memory operation in one stream is ordered before a memory operation of the same hart in the other stream only if a FENCE instruction orders them, an acquire or release annotation orders them, or a syntactic dependency orders them, under the rules of RVWMO.
+Program order alone, even to overlapping addresses, does not order them, including when the ext:ztso[] extension is implemented.#
+[#norm:Ztt_mm_fence]#FENCE and FENCE.TSO apply their predecessor and successor sets to Ztt memory operations as to any other memory operation of the hart; a Ztt memory operation is a device input or output operation, or a memory read or write, according to the PMAs of the location it accesses.#
+[#norm:Ztt_mm_sfence]#SFENCE.VMA orders the implicit accesses for address translation made by Ztt memory operations as it does those of other memory operations.#
+[#norm:Ztt_mm_shared]#The memory operations that a matrix unit shared by several harts performs for a Ztt instruction belong to the Ztt stream of the hart that executed it.#
+
+[NOTE]
+====
+The two streams let a matrix unit access memory through its own path, like an agent separate from the hart, while FENCE instructions and synchronization idioms keep working unchanged.
+Data passed between the streams within a hart needs a fence:
+
+* a store in the hart stream read by a Ztt load: `fence w,r`;
+* a Ztt store read by a load in the hart stream: `fence w,r`;
+* a load in one stream followed by an overlapping store in the other: `fence r,w`;
+* overlapping stores in the two streams that must take effect in program order: `fence w,w`.
+
+A release annotation, such as on `amoswap.w.rl`, also orders older Ztt memory operations, so a lock release needs no additional fence.
+====
 
 [[ztt-arith]]
 === Arithmetic Considerations
@@ -387,7 +480,12 @@ NOTE: The images are architectural so that debuggers, and contexts migrated betw
 [[ztt-exceptions]]
 === Exception Handling
 
-// Precise traps; restart of partially completed loads and stores.
+[#norm:Ztt_exc_precise]#Ztt instructions raise exceptions precisely: when an exception is taken on a Ztt instruction, all older instructions have completed, and no younger instruction has changed architectural state.#
+[#norm:Ztt_exc_ls_restart]#A Ztt load or store that raises an exception is restarted from its beginning when it is resumed.
+A load that raises an exception leaves its destination registers unchanged; a store that raises an exception may have written any part of its data to memory.#
+
+NOTE: Ztt has no counterpart to csr:vstart[].
+Restarting a store rewrites the elements written before the exception with the same values.
 
 [[ztt-extensions]]
 === Extensions in the Ztt Family
