@@ -386,6 +386,11 @@ They view memory as a matrix whose element (_d_, _k_) is at bit offset (_d_{nbsp
 
 NOTE: For elements narrower than 8 bits, a strided load or store that transfers whole rows moves the same bits as its `e8` form with _LD_ {times} _w_ / 8 as the leading dimension.
 
+In assembly, these forms are written with the leading dimension last, as in `mls.st.e16 m0, (a0), a1`.
+For the matrix-register loads, a leading dimension of `x0` may be omitted, as in `mls.st.e32 m4x2, (a7)`.
+
+NOTE: With _LD_ = 0, every row is read from the same memory row, so a load replicates a vector, such as a bias, into every row of the register.
+
 [#norm:Ztt_ls_forms]#For an operand matrix element (_r_, _c_):#
 
 * [#norm:Ztt_ls_st]#The strided forms, insn:mls.st[] and insn:mss.st[], transfer memory element (_r_, _c_).#
