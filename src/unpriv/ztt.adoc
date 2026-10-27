@@ -215,7 +215,7 @@ The datatypes of an instruction's operands are given by operand specifiers:
 
 <<ztt-encoding-64>> gives their positions in the encoding.
 In assembly, a datatype follows its register name, separated by a dot, as in `acc2.fp32`; the rounding mode and `sat`, when given, are trailing operands, as in F, and an omitted rounding mode is DYN for floating-point datatypes.
-A group of _G_ registers is written with the suffix ``x``__G__, as in `m4x2.int8`.
+A group of _G_ registers is written with the suffix ``x``__G__, as in `m4x2.int8`, also where the datatype requires the group, as in `m12x2.fp32`.
 [#norm:Ztt_spec_rsv]#A specifier field value that the operation does not use, or that is reserved for the named datatype, raises an illegal-instruction exception.#
 
 [[ztt-rounding]]
@@ -233,15 +233,18 @@ It takes the integer encodings when the source and destination datatypes are all
 |001 |RTZ |RNE
 |010 |RDN |RDN
 |011 |RUP |ROD
-|100 |RMM |_Reserved_
-|101 |ROD, round to odd |_Reserved_
-|110 |_Reserved_ |_Reserved_
+|100 |RMM |RMM
+|101 |ROD, round to odd |RTZ
+|110 |_Reserved_ |RUP
 |111 |DYN |_Reserved_
 |===
 
-The floating-point encodings are those of <<norm:dyn_round_enc>>, with 101 assigned to round to odd; the integer encodings are those of csr:vxrm[].
+The floating-point encodings are those of <<norm:dyn_round_enc>>, with 101 assigned to round to odd; the integer encodings 000 to 011 are those of csr:vxrm[].
+[#norm:Ztt_rm_int_ext]#The integer encodings RMM, RTZ, and RUP round to nearest with ties away from zero, toward zero, and toward +∞, respectively.#
+
+NOTE: Integer RMM is the rounding of the requantization in common inference libraries, so a right shift by insn:mldexp[] can match them exactly.
 [#norm:Ztt_rm_dyn]#DYN selects the rounding mode in csr:frm[]; as in F, the behavior when csr:frm[] holds a reserved value is reserved.#
-[#norm:Ztt_rm_rod_int]#ROD is reserved when the destination datatype is an integer datatype.#
+[#norm:Ztt_rm_rod_int]#The floating-point encoding ROD is reserved when the destination datatype is an integer datatype.#
 
 [[ztt-saturation]]
 ==== Saturation
@@ -648,13 +651,31 @@ Mixed widths fit the register model unchanged: the narrower source occupies the 
 [[ztt-ops-elementwise]]
 ==== Elementwise Operations
 
-[#norm:Ztt_ew_operands]#An elementwise operation applies to corresponding elements of operands that are either all matrix-register operands of one element width and one register-group size (<<ztt-groups>>), or all accumulator registers.
+[#norm:Ztt_ew_operands]#An elementwise operation applies to corresponding elements of matrix-register operands of one element width and one register-group size (<<ztt-groups>>), or of accumulator registers as listed in <<ztt-acc-ops-table>>.
 A scalar operand, taken from an X register or from a 7-bit signed immediate in the instruction, applies to every element.#
+[#norm:Ztt_ew_scalar]#An X register supplies the encoding of a value of _w_ bits in its low _w_ bits; _w_ > XLEN is reserved.
+An immediate is a signed integer and is reserved for an operand of a floating-point datatype.#
+
+[[ztt-ops-arith]]
+===== Arithmetic
+
+[#norm:Ztt_ew_arith]#insn:madd[], insn:msub[], and insn:mmul[] compute _a_ + _b_, _a_ − _b_, and _a_ {times} _b_ of corresponding elements _a_ of the first and _b_ of the second source.
+For a floating-point datatype, the result is rounded as selected by `rm` and saturated as selected by `sat`.
+For an integer datatype, the result wraps or saturates as selected by `sat`, and an `rm` other than 0 is reserved.#
+[#norm:Ztt_ew_minmax]#insn:mmax[] and insn:mmin[] write the larger and the smaller of _a_ and _b_.
+For floating-point datatypes they are the maximumNumber and minimumNumber operations of IEEE 754-2019, as insn:fmax.s[] and insn:fmin.s[].
+An `rm` other than 0 and `sat` are reserved for them.#
+[#norm:Ztt_ew_msmul]#insn:msmul[] is a fixed-point multiply for signed integer datatypes of width _w_: it shifts _a_ {times} _b_ right by _w_ − 1, rounding as selected by `rm`, and saturates the result; `sat` = 0 is reserved.#
+
+NOTE: insn:msmul[] is the fractional multiply of the vector extension's insn:vsmul.vv[], and the scaling step of integer requantization.
+
+[#norm:Ztt_ew_types]#The arithmetic operations support every integer datatype and every floating-point datatype except E8M0 and TF32; insn:msmul[] supports only signed integer datatypes.
+The source and destination datatypes are equal.#
 
 [[ztt-ops-mldexp]]
 ===== Power-of-Two Scaling
 
-[#norm:Ztt_mldexp]#insn:mldexp[] (matrix load exponent) computes each element of its destination as the corresponding element of its source multiplied by 2^__e__^, where the exponent _e_ is the corresponding element of a third operand of a signed integer datatype, or a scalar operand.
+[#norm:Ztt_mldexp]#insn:mldexp[] (matrix load exponent) computes each element of its destination as the corresponding element of its source multiplied by 2^__e__^, where the exponent _e_ is the corresponding element of a third operand of a signed integer datatype, or a scalar or broadcast operand.
 The source and destination datatypes are equal.#
 
 [#norm:Ztt_mldexp_mod]#With the flag `mod` set, the exponent is reduced modulo the element width; `mod` is reserved for floating-point datatypes.#
@@ -687,12 +708,56 @@ The immediate form serves kernels specialized for one layer, and scaling by a co
 It saves a register and the instruction that loads it, and it reads no X register, so a decoupled matrix unit receives the operand with the instruction.
 ====
 
+[[ztt-ops-acc]]
+===== Operations on Accumulators
+
+[#norm:Ztt_acc_ops]#The elementwise operations of <<ztt-acc-ops-table>> also take accumulator registers as destination and first source, with the second operand forms listed.#
+
+[[ztt-acc-ops-table]]
+.Elementwise operations on accumulators.
+[%autowidth,float="center",align="center",cols="<,<,<",options="header"]
+|===
+|Operation |Second operand |Use
+|insn:madd[] |accumulator, matrix register, broadcast |Combining results, residual add, bias
+|insn:mmul[] |accumulator, broadcast |Gating, per-channel scale
+|insn:msmul[], insn:mldexp[] |scalar, broadcast |Requantization, per tensor or per channel
+|insn:mmax[], insn:mmin[] |scalar |ReLU and clamping
+|===
+
+[#norm:Ztt_acc_madd_m]#When the second operand of insn:madd[] is a matrix-register operand, it designates a tile as for insn:mcvt[], and its datatype is one that converts exactly to the accumulator datatype; the sum is rounded once.#
+[#norm:Ztt_bcast]#A broadcast operand is row 0 of a matrix-register operand that designates a tile as for insn:mcvt[], a vector _v_ of _N_ elements.
+In the row form, written with the suffix `.row`, element (_i_, _j_) of the result uses _v_~__j__~; in the column form, written `.col`, it uses _v_~__i__~.#
+
+NOTE: Other operations on accumulators, such as GELU, convert to a matrix register with insn:mcvt[] and continue there.
+
+[source,asm]
+----
+madd.row  acc0.fp32, acc0.fp32, m12x2.fp32     # bias per output column
+madd      acc0.fp32, acc0.fp32, m2.bf16        # residual add, widening
+mmax      acc0.fp32, acc0.fp32, x0             # ReLU: x0 holds +0.0
+msmul.row acc1.int32, acc1.int32, m14x2.int32, rmm  # per-channel multiplier
+----
+
+[[ztt-ops-cmp]]
+===== Compares
+
+[#norm:Ztt_mcmp]#insn:mcmpeq[], insn:mcmpne[], insn:mcmplt[], insn:mcmple[], insn:mcmpgt[], and insn:mcmpge[] compare corresponding elements of two sources of one datatype and write all ones where the comparison holds and zero elsewhere.
+The destination datatype is the unsigned integer datatype of the same width.
+An `rm` other than 0 and `sat` are reserved for them.#
+[#norm:Ztt_mcmp_fp]#For floating-point datatypes, a comparison with a NaN is false except for insn:mcmpne[]; insn:mcmpeq[] and insn:mcmpne[] raise NV for a signaling NaN, and the others for any NaN, as insn:feq.s[], insn:flt.s[], and insn:fle.s[] do.#
+
+NOTE: A mask selects with insn:mand[], insn:mandnot[], or insn:mbsel[].
+The two halves of a select by one mask are exact complements, and a NaN goes to the half the choice of comparison sends it to.
+
 [[ztt-ops-bitwise]]
 ==== Bitwise Operations
 
+[#norm:Ztt_bitwise]#insn:mand[], insn:mandnot[], insn:mor[], insn:mornot[], and insn:mxor[] compute _a_ & _b_, _a_ & ~__b__, _a_ {vbar} _b_, _a_ {vbar} ~__b__, and _a_ ^ _b_.
+insn:mbsel[] computes (__a__ & _b_) {vbar} (~__a__ & _d_), where _d_ is the destination element, so that mask _a_ selects bits of _b_ over the destination.#
+
 [#norm:Ztt_mrol]#insn:mrol[] rotates each element of its source left by the corresponding element of a second operand, or by a scalar operand, reduced modulo the element width.#
-[#norm:Ztt_mrol_types]#insn:mrol[] operates on matrix-register operands.
-Its datatypes are unsigned integer datatypes, which give only the element width; the other datatypes, a nonzero `rm`, and `sat` are reserved for it.#
+[#norm:Ztt_bitwise_types]#Bitwise operations operate on matrix-register operands.
+Their datatypes are unsigned integer datatypes, which give only the element width; the other datatypes, an `rm` other than 0, and `sat` are reserved for them.#
 
 NOTE: A rotate right by _n_ is a rotate left by −__n__ modulo the element width, so one operation provides both directions.
 Rotates serve hashing, checksums, and the permutation of packed fields.
@@ -712,7 +777,10 @@ An accumulator operand designates an accumulator register, or an accumulator pai
 [#norm:Ztt_mcvt_conv]#A result that is not exactly representable in the destination datatype is rounded as selected by `rm` (<<ztt-rounding>>) and saturated as selected by `sat` (<<ztt-saturation>>).
 An integer source is sign-extended if signed and zero-extended if unsigned.#
 
-[#norm:Ztt_mcvt_combos]#insn:mcvt[] supports every pair of datatypes of <<ztt-type-code-table>>, except that E8M0 converts only to and from FP32, and a 64-bit datatype requires a 64-bit accumulation extension (<<ztt-ext-acc64>>).#
+[#norm:Ztt_mcvt_combos]#insn:mcvt[] supports every pair of datatypes of <<ztt-type-code-table>>, except that E8M0 converts only to and from FP32, INT32, UINT32, INT64, UINT64, and FP64 do not convert to floating-point datatypes narrower than 32 bits, and a 64-bit datatype requires a 64-bit accumulation extension (<<ztt-ext-acc64>>).#
+
+NOTE: Each supported conversion is exact through FP32 or ends in a datatype of 32 bits or more, so a converter with an FP32 internal format rounds once.
+Software converts the excluded pairs through FP32.
 
 [source,asm]
 ----
