@@ -831,6 +831,74 @@ The pseudoinstruction insn:mmv[] copies registers without conversion, using inte
 All `m` and `acc` registers are caller-saved: a called function need not preserve them, as for the vector registers and the Intel AMX tile registers.
 The RISC-V psABI is the authoritative definition.
 
+[[ztt-example-gemm]]
+==== Example: Matrix Multiply with Bias and ReLU
+
+The following code computes one 2__N__ {times} 2__N__ block of C = ReLU(A {times} W^T^ + bias) in BF16, accumulating in FP32 in four accumulators.
+W is stored as `[P][K]`, the usual layout of weights, so its rows are the B^T^ that insn:mmacc[] reads.
+The code does not depend on _N_.
+
+[source,asm]
+----
+# a0: &A[i][0]   a1: lda   a2: &W[j][0]   a3: ldw   (leading dimensions in elements)
+# a4: &C[i][j]   a5: ldc   a6: K, a multiple of N   a7: &bias[j]
+
+        csrr        t0, amenlen         # N
+        slli        t1, t0, 1           # N BF16 elements are 2N bytes
+        mul         t3, t0, a1
+        slli        t3, t3, 1
+        add         t3, a0, t3          # &A[i+N][0]
+        mul         t4, t0, a3
+        slli        t4, t4, 1
+        add         t4, a2, t4          # &W[j+N][0]
+        mzero       acc0
+        mzero       acc1
+        mzero       acc2
+        mzero       acc3
+1:      mls.st.e16  m0, (a0), a1        # A rows i to i+N-1, next N columns
+        mls.st.e16  m1, (t3), a1        # A rows i+N to i+2N-1
+        mls.st.e16  m2, (a2), a3        # W rows j to j+N-1
+        mls.st.e16  m3, (t4), a3        # W rows j+N to j+2N-1
+        mmacc       acc0.fp32, m0.bf16, m2.bf16
+        mmacc       acc1.fp32, m0.bf16, m3.bf16
+        mmacc       acc2.fp32, m1.bf16, m2.bf16
+        mmacc       acc3.fp32, m1.bf16, m3.bf16
+        add         a0, a0, t1
+        add         t3, t3, t1
+        add         a2, a2, t1
+        add         t4, t4, t1
+        sub         a6, a6, t0
+        bnez        a6, 1b
+
+        slli        t2, t0, 2           # N FP32 elements are 4N bytes
+        add         t2, a7, t2          # &bias[j+N]
+        mls.st.e32  m4x2, (a7)          # bias[j] to bias[j+N-1] in every row
+        mls.st.e32  m6x2, (t2)          # bias[j+N] to bias[j+2N-1]
+        madd.row    acc0.fp32, acc0.fp32, m4x2.fp32
+        madd.row    acc1.fp32, acc1.fp32, m6x2.fp32
+        madd.row    acc2.fp32, acc2.fp32, m4x2.fp32
+        madd.row    acc3.fp32, acc3.fp32, m6x2.fp32
+        mmax        acc0.fp32, acc0.fp32, x0    # ReLU: x0 holds +0.0
+        mmax        acc1.fp32, acc1.fp32, x0
+        mmax        acc2.fp32, acc2.fp32, x0
+        mmax        acc3.fp32, acc3.fp32, x0
+        mcvt        acc0.bf16, acc0.fp32        # in place, rounding mode DYN
+        mcvt        acc1.bf16, acc1.fp32
+        mcvt        acc2.bf16, acc2.fp32
+        mcvt        acc3.bf16, acc3.fp32
+        msa.st.e16  acc0, (a4), a5      # C[i][j]
+        add         t5, a4, t1
+        msa.st.e16  acc1, (t5), a5      # C[i][j+N]
+        mul         t6, t0, a5
+        slli        t6, t6, 1
+        add         a4, a4, t6
+        msa.st.e16  acc2, (a4), a5      # C[i+N][j]
+        add         t5, a4, t1
+        msa.st.e16  acc3, (t5), a5      # C[i+N][j+N]
+----
+
+NOTE: Blocks at the edges of C, and a _K_ that is not a multiple of _N_, use the partial-tile forms of the loads and stores, whose zero fill makes the extra columns contribute nothing.
+
 [[ztt-insns]]
 === Instructions (in alphabetical order)
 
