@@ -214,6 +214,8 @@ The datatypes of an instruction's operands are given by operand specifiers:
 |===
 
 <<ztt-encoding-64>> gives their positions in the encoding.
+In assembly, a specifier follows its register name, separated by a dot; the destination specifier names the datatype, then optionally the rounding mode and `sat`, as in `acc2.fp32.rne`.
+A group of _G_ registers is written with the suffix ``x``__G__, as in `m4x2.int8`.
 [#norm:Ztt_spec_rsv]#A specifier field value that the operation does not use, or that is reserved for the named datatype, raises an illegal-instruction exception.#
 
 [[ztt-rounding]]
@@ -474,8 +476,35 @@ A release annotation, such as on `amoswap.w.rl`, also orders older Ztt memory op
 [[ztt-matmul-numerics]]
 ==== Matrix-Multiply Numerics
 
-// The defined product precision and accumulation order for standard combinations,
-// or a selectable fused mode (decision 9).
+A floating-point matrix multiply updates element (_i_, _j_) of C with the _K_ products of element (_i_, _k_) of A and element (_k_, _j_) of the multiplier, which is B^T^ for insn:mmacc[] and B for insn:mmacc.n[].
+
+[#norm:Ztt_num_sdp]#Consecutive products form sub-dot-products of _W_ products, where _W_ is 16 divided by the larger source element width, or 1 when that width is 16 bits or more.#
+[#norm:Ztt_num_steps]#Consecutive sub-dot-products form steps of _N_ sub-dot-products.
+The result is that of applying the steps one at a time, in increasing order of _k_.#
+
+[#norm:Ztt_num_group]#Within a step, the sub-dot-products are partitioned into consecutive groups of _P_, where _P_ is an implementation-defined power of two that divides _N_.
+Each group is reduced to a partial sum _S_ according to an implementation-defined parameter `psm`:#
+
+* [#norm:Ztt_num_psm0]#If `psm` = 0, _S_ is exact.#
+* [#norm:Ztt_num_psm1]#If `psm` = 1, _S_ is formed by an implementation-defined non-exact reduction of the group's products.
+The implementation discloses the algorithm and the values of its parameters.#
+
+[#norm:Ztt_num_rnd]#Before it is accumulated, _S_ is treated according to an implementation-defined parameter `rnd`:#
+
+* [#norm:Ztt_num_rnd_rm]#If `rnd` = `rm`, _S_ is rounded to the datatype of C as selected by `rm`.#
+* [#norm:Ztt_num_rnd_rto]#If `rnd` = `rto`, _S_ is rounded to the datatype of C with round to odd.#
+* [#norm:Ztt_num_rnd_xct]#If `rnd` = `xct`, _S_ is not rounded.#
+
+[#norm:Ztt_num_acc]#Each group then updates the element as C~__i__,__j__~ ← round~rm~(C~__i__,__j__~ + _S_), rounding as selected by `rm`.#
+
+[#norm:Ztt_num_disclose]#An implementation discloses its (_P_, `psm`, `rnd`) for each combination of source element widths and C datatype that it supports.
+The disclosed values apply to every datatype combination with those widths, and to both insn:mmacc[] and insn:mmacc.n[].#
+
+[#norm:Ztt_num_special]#Special values are handled as if each product were exact and each sum and rounding of the model were the corresponding IEEE 754 operation: an invalid product or sum, or a NaN source, produces the canonical NaN.#
+[#norm:Ztt_num_flags]#The flags accrued in csr:fflags[] are the bitwise OR of the flags raised by the operations of the model, in any order.#
+
+NOTE: _P_, `psm`, and `rnd` are the parameters `G`, `psm`, and `rnd` of the floating-point matrix multiplies of ext:zvvmm[], with `rm` in place of `frm`, so the same disclosure describes both.
+The model depends only on _k_, so insn:mmacc[] and insn:mmacc.n[] produce the same result for the same matrices.
 
 [[ztt-exceptions]]
 === Exception Handling
@@ -502,6 +531,11 @@ Restarting a store rewrites the elements written before the exception with the s
 
 // Candidate subextensions, one subsection each with dependencies, instruction list,
 // and Included-in references:
+// - mixed-width matrix multiply: sources of different element widths, the narrower
+//   source using the smaller register group so that both have the same K;
+// - 64-bit accumulation: FP64 and INT64 accumulator datatypes held in aligned
+//   accumulator pairs split by column, e64 accumulator loads and stores
+//   (FP64 x FP64, FP32 x FP32 -> FP64; INT16 x INT16 -> INT64);
 // - block-scaled matrix multiply (decision 14);
 // - quantization primitives (decision 15);
 // - row moves to and from V, requiring a vector extension (decision 16).
@@ -509,12 +543,82 @@ Restarting a store rewrites the elements written before the exception with the s
 [[ztt-ops]]
 === Instruction Groups
 
-// Matrix multiply forms: C += A x B^T, the base form as in Zvvmm, and C += A x B,
-// which reads B as stacked slots for element widths below 16 bits. There is no
-// A^T x B form; A^T is obtained with a transposing load.
-// One informative overview subsection per group, pointing at the instruction pages:
+// One overview subsection per group, pointing at the instruction pages:
 // matrix multiply, elementwise arithmetic, compares and bitwise operations, conversions,
 // packing and unpacking, reductions and broadcasts, data movement.
+
+[[ztt-ops-mmacc]]
+==== Matrix Multiply
+
+[#norm:Ztt_mmacc]#insn:mmacc[] computes C ← C + A {times} B^T^, and insn:mmacc.n[] computes C ← C + A {times} B, where C is an accumulator register and A and B are matrix-register operands.#
+There is no A^T^ {times} B form; a transposing load supplies A^T^.
+
+[#norm:Ztt_mmacc_shape]#A is the _N_ {times} _K_ matrix held by its operand (<<ztt-groups>>).
+For insn:mmacc[], B is the _N_ {times} _K_ matrix held by its operand.
+For insn:mmacc.n[], B is the _K_ {times} _N_ matrix whose row _k_ is row _k_ mod _N_ of columns ⌊__k__/__N__⌋{nbsp}{times}{nbsp}__N__ to ⌊__k__/__N__⌋{nbsp}{times}{nbsp}__N__ + _N_ − 1 of its operand.#
+[#norm:Ztt_mmacc_k]#An instruction whose two source operands have different numbers of columns raises an illegal-instruction exception.#
+
+NOTE: For element widths below 16 bits, the rows of B for insn:mmacc.n[] are the stacked slots of <<ztt-mreg-layout>>, as written by insn:mls.sst[].
+
+[#norm:Ztt_mmacc_spec]#The destination specifier names the datatype of C, which is both read and written; the source specifiers name the datatypes of A and B.#
+Widening is expressed by these datatypes alone:
+
+[source,asm]
+----
+mmacc    acc2.fp32, m0.e4m3, m4.e5m2          # FP8 into FP32, rounding mode DYN
+mmacc    acc1.int32, m0x2.uint8, m2x2.int8    # K = 4N
+mmacc.n  acc0.fp32.rne, m0.bf16, m8.bf16      # C += A x B
+----
+
+[#norm:Ztt_mmacc_combos]#Ztt supports the datatype combinations of <<ztt-mmacc-table>>, in which A and B have the same element width and may otherwise differ.
+Other combinations raise an illegal-instruction exception unless an extension supports them.#
+
+[[ztt-mmacc-table]]
+.Matrix-multiply datatype combinations.
+[%autowidth,float="center",align="center",cols="<,<",options="header"]
+|===
+|A and B |C
+|INT2, UINT2 |INT32, UINT32
+|INT4, UINT4 |INT32, UINT32
+|INT8, UINT8 |INT32, UINT32
+|INT16, UINT16 |INT32, UINT32
+|E2M1 |FP32
+|E2M3, E3M2, E4M3, E5M2 |FP32
+|FP16, BF16 |FP32
+|TF32, FP32 |FP32
+|===
+
+[#norm:Ztt_mmacc_int]#For integer datatypes, C is replaced by the exact sum of C and the products, reduced modulo 2^32^; `rm` and `sat` values other than 0 are reserved.#
+[#norm:Ztt_mmacc_fp]#For floating-point datatypes, C is computed as specified in <<ztt-matmul-numerics>>, with saturation as selected by `sat` (<<ztt-saturation>>).#
+
+[#norm:Ztt_mzero]#insn:mzero[] writes zero to every element of an accumulator register.#
+It is a 32-bit instruction (<<ztt-encoding-32>>).
+
+[NOTE]
+====
+The supported combinations are those of a single input width that machine-learning and high-performance computing kernels use.
+<<ztt-mmacc-uses>> lists combinations in use and where they are provided.
+
+[[ztt-mmacc-uses]]
+.Matrix-multiply combinations in use.
+[%autowidth,float="center",align="center",cols="<,<,<",options="header"]
+|===
+|A {times} B → C |Use |Provided by
+|E2M3 or E3M2 {times} E4M3 or E5M2 → FP32 |MX training with FP6 and FP8 operands |Ztt
+|TF32 {times} TF32 → FP32 |Training on FP32 data |Ztt
+|INT2 {times} INT2 → INT32 |2-bit and ternary networks |Ztt
+|INT8 {times} INT8 → INT32 |FP64 emulation by the Ozaki scheme |Ztt
+|INT4 {times} INT8 → INT32 |4-bit weights, 8-bit activations |Mixed-width extension
+|INT2 {times} INT8 → INT32 |Ternary weights, 8-bit activations |Mixed-width extension
+|E2M1 {times} E4M3 → FP32 |FP4 weights, FP8 activations |Mixed-width extension
+|FP64 {times} FP64 → FP64 |Double-precision GEMM |64-bit accumulation extension
+|FP32 {times} FP32 → FP64 |Mixed-precision solvers |64-bit accumulation extension
+|INT16 {times} INT16 → INT64 |Ozaki-scheme variants |64-bit accumulation extension
+|INT4 or FP8 {times} BF16 → FP32 |Weight-only quantization |None: needs per-group scales
+|===
+
+Mixed widths fit the register model unchanged: the narrower source occupies the smaller register group, so that both have the same _K_.
+====
 
 [[ztt-sw]]
 === Software Considerations
