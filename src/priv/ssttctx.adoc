@@ -1,0 +1,47 @@
+[[ext:ssttctx]]
+=== ext:ssttctx[] Extension for Attached Matrix Context Management
+
+// Scope: supervisor-level management of ext:ztt[] contexts, including their
+// virtualization under the hypervisor extension.
+// The context-status field (mstatus.MS and its sstatus and vsstatus views) belongs to
+// ext:ztt[] and is specified with mstatus, sstatus, and vsstatus, not here.
+// Source material: backend_management.adoc and software_guidance.adoc on
+// ptomsich/ame-context-management, to be rewritten for untyped registers.
+
+[[ssttctx-contexts]]
+==== Contexts and Backends
+
+// Resident contexts, backends shared by several harts or dedicated to one,
+// and the split between hardware and the allocator.
+
+[[ssttctx-binding]]
+==== Hart Binding and Ownership Tags
+
+// The per-hart selection of a context and the ownership tag it is bound to;
+// clearing of state on an ownership transfer.
+
+[[ssttctx-csrs]]
+==== Control and Status Registers
+
+// amectx and ametag, one subsection each with a register diagram.
+
+[[ssttctx-insns]]
+==== Instructions
+
+// ame.acquire, ame.release, ame.save, and ame.restore, one page each, specified here
+// and not with the Ztt instructions in src/unpriv/ztt-insns/.
+// Their encodings occupy slots of the 32-bit OP-VE funct3 = 100 space shared with Ztt.
+
+[[ssttctx-save-format]]
+==== Context Save Format
+
+// The architectural layout written by ame.save and read by ame.restore,
+// built from the whole-register images of ext:ztt[].
+
+[[ssttctx-virt]]
+==== Virtualization
+
+// hamectx, hametag, and hstatus.VTAME: translation of the context and tag
+// namespaces for guests, and emulation of the context-management instructions.
+
+//
