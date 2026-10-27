@@ -257,26 +257,62 @@ Integer saturation is not reported: it is requested by the destination specifier
 [[ztt-operands]]
 === Mapping of Matrix Elements to Register State
 
-// Unit, packed, and wide operands; pack factor and group size from the operand's own type;
-// the four-register span bound; alignment of register groups (decision 4).
-// All spans and legality checks are functions of the encoding.
+[[ztt-mreg-layout]]
+==== Matrix Registers
 
-[[ztt-unit-operands]]
-==== Unit Operands
+[#norm:Ztt_mreg_rows]#A matrix register holds _N_ rows of 2__N__ bytes.#
+[#norm:Ztt_mreg_operand]#An operand of element width _w_ held in one matrix register is an _N_ {times} 16__N__/__w__ matrix in row-major order: element (_r_, _c_) occupies bits _w_ {times} _c_ + _w_ − 1 to _w_ {times} _c_ of row _r_, numbering the bits of a row from bit 0 of its first byte.#
+The element width of each datatype is given in <<ztt-type-code-table>>.
 
-[[ztt-packed-operands]]
-==== Packed Operands
+[[ztt-columns-table]]
+.Columns per matrix register.
+[%autowidth,float="center",align="center",cols=">,>",options="header"]
+|===
+|Element width |Columns
+|2 bits |8__N__
+|4 bits |4__N__
+|8 bits |2__N__
+|16 bits |_N_
+|32 bits |_N_/2
+|64 bits |_N_/4
+|===
 
-// Pack factor; packed sources extend the inner dimension K of a matrix multiply.
+NOTE: Elements are contiguous along each row, as in the input tiles of ext:zvvmm[], so a row-major matrix, or the transpose of a column-major one, loads without rearrangement.
 
-[[ztt-wide-operands]]
-==== Wide Operands and Register Groups
+[#norm:Ztt_slots]#For an element width _w_ < 16, columns _sN_ to (__s__ + 1)__N__ − 1 form slot _s_ of the register, an _N_ {times} _N_ matrix; a register has 16/__w__ slots.#
+[#norm:Ztt_slots_stack]#An instruction that reads such a register as a 16__N__/__w__ {times} _N_ matrix stacks its slots vertically: row _k_ of that matrix is row _k_ mod _N_ of slot ⌊__k__/__N__⌋.#
+
+[[ztt-groups]]
+==== Register Groups
+
+[#norm:Ztt_group]#An operand may occupy a group of _G_ = 2 or 4 consecutive matrix registers, the first of which has a register number that is a multiple of _G_.
+Register _j_ of the group holds columns _j_{nbsp}{times}{nbsp}16__N__/__w__ to (__j__ + 1){nbsp}{times}{nbsp}16__N__/__w__ − 1, so the operand is an _N_ {times} 16__GN__/__w__ matrix.#
+[#norm:Ztt_group_size]#An operand of element width _w_ > 16 occupies _G_ = _w_/16 registers and is an _N_ {times} _N_ matrix.
+A matrix multiply may use a larger _G_ for its wider source (<<ztt-ops>>).
+No operand occupies more than four registers.#
+[#norm:Ztt_group_align]#An instruction that names a group whose first register number is not a multiple of _G_ raises an illegal-instruction exception.#
+
+[[ztt-acc-layout]]
+==== Accumulator Registers
+
+[#norm:Ztt_acc_layout]#An accumulator register holds an _N_ {times} _N_ matrix of 32-bit elements in row-major order.#
+[#norm:Ztt_acc_narrow]#A value of an accumulator datatype narrower than 32 bits occupies the low bits of its element; the other bits are written as zero and ignored when read.#
+
+[#norm:Ztt_acc_storage]#Accumulator conversions and loads and stores also use two storage forms:#
+
+* [#norm:Ztt_acc_storage8]#8-bit: an _N_ {times} _N_ matrix of 8-bit elements, each in the low 8 bits of its element.#
+* [#norm:Ztt_acc_storage4]#4-bit: an _N_ {times} 2__N__ matrix of 4-bit elements, in which element (_r_, _c_) occupies bits 4{nbsp}{times}{nbsp}(_c_ mod 2) + 3 to 4{nbsp}{times}{nbsp}(_c_ mod 2) of element (_r_, ⌊__c__/2⌋), whose upper 24 bits are zero.#
+
+Matrix multiplies do not read or write the storage forms.
 
 [[ztt-register-images]]
 ==== Whole-Register Images
 
-// The architectural whole-register image, including packed slots and wide groups,
-// independent of the internal layout of an implementation.
+[#norm:Ztt_mreg_image]#The image of a matrix register is its 2__N__^2^ bytes, row 0 first.#
+[#norm:Ztt_acc_image]#The image of an accumulator register is its _N_^2^ 32-bit elements in row-major order, each in little-endian byte order.#
+[#norm:Ztt_image_arch]#Images are independent of how an implementation stores registers internally; whole-register loads and stores transfer them unchanged.#
+
+NOTE: The images are architectural so that debuggers, and contexts migrated between harts with the same _N_, observe the same bytes on every implementation.
 
 [[ztt-encoding]]
 === Attached Matrix Instruction Formats
@@ -375,6 +411,9 @@ Integer saturation is not reported: it is requested by the destination specifier
 [[ztt-ops]]
 === Instruction Groups
 
+// Matrix multiply forms: C += A x B^T, the base form as in Zvvmm, and C += A x B,
+// which reads B as stacked slots for element widths below 16 bits. There is no
+// A^T x B form; A^T is obtained with a transposing load.
 // One informative overview subsection per group, pointing at the instruction pages:
 // matrix multiply, elementwise arithmetic, compares and bitwise operations, conversions,
 // packing and unpacking, reductions and broadcasts, data movement.
