@@ -388,7 +388,32 @@ The first word is laid out as an R-type instruction, with the destination and so
 
 [#norm:Ztt_enc64_rsv]#A field that an instruction does not use is reserved and must be zero; an instruction in which it is not raises an illegal-instruction exception.#
 
-[#norm:Ztt_enc64_mm]#In the matrix-multiply format, `f6`[2:0] holds the column field `kc` (<<ztt-enc-columns>>).#
+[#norm:Ztt_enc64_mm]#The matrix-multiply format, `fmt` = 001, holds the column field `kc` (<<ztt-enc-columns>>) in bits 60:58; bits 38:37 and 63:61 are reserved.#
+
+[[ztt-enc64-mm-fig]]
+.Matrix-multiply format.
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '001', attr: ['MM'] },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: 'ms2' },
+    { bits: 7, name: 'op' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: 'rm' },
+    { bits: 1, name: 'sat' },
+    { bits: 5, name: 't1' },
+    { bits: 5, name: 't2' },
+    { bits: 3, name: 'kc' },
+    { bits: 3, name: '000' }
+], config:{lanes: 2, hspace: 1024}}
+....
 
 [[ztt-enc-columns]]
 ==== Operand Columns
