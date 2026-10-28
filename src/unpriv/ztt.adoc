@@ -682,7 +682,7 @@ The model depends only on _k_, so insn:mmacc[] and insn:mmacc.n[] produce the sa
 === Exception Handling
 
 [#norm:Ztt_exc_precise]#Ztt instructions raise exceptions precisely: when an exception is taken on a Ztt instruction, all older instructions have completed, and no younger instruction has changed architectural state.#
-[#norm:Ztt_exc_decode]#Ztt instructions other than loads and stores raise no exceptions other than illegal-instruction exceptions, which depend only on the instruction, on csr:mstatus[ts], csr:vsstatus[ts], and csr:frm[], and on XLEN.#
+[#norm:Ztt_exc_decode]#Apart from exceptions raised in fetching them and breakpoints, Ztt instructions other than loads and stores raise no exceptions other than illegal-instruction exceptions, which depend only on the instruction, on csr:mstatus[ts], csr:vsstatus[ts], and csr:frm[], and on XLEN.#
 
 NOTE: An implementation can therefore decide at decode whether such an instruction raises an exception, and dispatch it to a matrix unit without waiting for its completion.
 
