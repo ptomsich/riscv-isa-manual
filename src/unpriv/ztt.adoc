@@ -898,6 +898,30 @@ mmul    m4.fp32, m4.fp32, t0              # t0 holds log2(e), scaled
 mexp2   m4.fp32, m4.fp32
 ----
 
+[[ztt-ops-mrec]]
+===== Reciprocal and Reciprocal Square Root
+
+[#norm:Ztt_mrec]#insn:mrec[] computes 1/__x__ and insn:mrsqrt[] computes 1/√__x__ of each element _x_ of its source.
+The source and destination datatypes are equal, and are FP16, BF16, or FP32.
+A result is rounded as for insn:mexp2[] (<<ztt-ops-mexp2>>).#
+[#norm:Ztt_mrec_special]#For insn:mrec[], 1/±0 is ±{inf} and raises DZ, and 1/±{inf} is ±0.
+For insn:mrsqrt[], 1/√±0 is ±{inf} and raises DZ, 1/√+{inf} is +0, and a source less than 0 gives the canonical NaN and raises NV.
+A NaN gives the canonical NaN, and raises NV if signaling.
+A result beyond the largest finite value is ±{inf}, or the largest finite value as selected by `sat`.
+The other floating-point exception flags accrue as for insn:mexp2[], and an `rm` other than 0 is reserved.#
+
+NOTE: A quotient _a_/__b__ is _a_ {times} 1/__b__, rounded twice.
+Softmax multiplies by the reciprocal of the row sums, and normalization by the reciprocal square root of the variance:
+
+[source,asm]
+----
+mrec    m6.fp32, m6.fp32                  # m6 holds the sum of each row
+mmul    m4.fp32, m4.fp32, m6.fp32         # softmax
+madd    m8.fp32, m8.fp32, t0              # variance + epsilon, from t0
+mrsqrt  m8.fp32, m8.fp32
+mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon)
+----
+
 [[ztt-ops-acc]]
 ===== Operations on Accumulators
 
