@@ -1317,6 +1317,99 @@ For the row maximum _m_, it computes e^__y__^ for _y_ = _x_ − _m_ as 2^__z__^ 
 
 The third pass computes the exponentials again instead of loading them stored by the second, which trades three instructions per register for a store of each tile.
 
+[[ztt-example-flash]]
+==== Example: Flash Attention
+
+The following code computes O = softmax(__s__ Q K^T^) V for a block of _N_ query rows in BF16, with a head dimension _d_ = 4__N__, in one pass over _L_ keys and values.
+For each block of _N_ keys, it raises the row maxima _m_, rescales the row sums _l_ and the output by α = 2^__a__^ for _a_ = __m__~old~ − __m__~new~, and adds the new block's contributions; it divides by _l_ once at the end.
+The output stays in four accumulators, the scores use a fifth, the row sums a sixth, and the seventh brings α, which is replicated along each row, to the accumulators.
+
+[source,asm]
+----
+# a0: &Q[i][0]   a1: ldq   a2: &K[0][0]   a3: ldk   a4: &V[0][0]   a5: ldv
+# a6: &O[i][0]   a7: L, a multiple of N   s0: ldo   (leading dimensions in elements)
+# s1: s log2(e) in FP32, for the scale s of the scores
+
+        csrr        t1, amenlenb        # 2N
+        mul         t2, t1, a3          # N rows of K
+        mul         t3, t1, a5          # N rows of V
+        mul         t5, a7, a3
+        slli        t5, t5, 1
+        add         t5, a2, t5          # &K[L][0]
+        mls.st.e16  m0x4, (a0), a1      # Q: N rows, 4N columns
+        li          t4, 0xff800000      # -infinity
+        mfill.e32   m16, t4
+        mfill.e32   m17, t4             # m16x2: running row maxima
+        li          t4, 0x3f800000      # 1.0
+        mfill.e32   m20, t4
+        mfill.e32   m21, t4             # m20x2: ones
+        mzero       acc0
+        mzero       acc1
+        mzero       acc2
+        mzero       acc3                # acc0 to acc3: output
+        mzero       acc5                # row sums
+
+1:      mls.st.e16  m4x4, (a2), a3      # N keys
+        add         a2, a2, t2
+        mls.st.e16  m8x4, (a4), a5      # N values
+        add         a4, a4, t3
+        mzero       acc4
+        mmacc       acc4.fp32, m0.bf16, m4.bf16     # scores
+        mmacc       acc4.fp32, m1.bf16, m5.bf16
+        mmacc       acc4.fp32, m2.bf16, m6.bf16
+        mmacc       acc4.fp32, m3.bf16, m7.bf16
+        mmul        acc4.fp32, acc4.fp32, s1
+        mcvt        m12x2.fp32, acc4.fp32
+        mredmax.row m14x2.fp32, m12x2.fp32
+        mmax        m14.fp32, m14.fp32, m16.fp32    # new row maxima
+        mmax        m15.fp32, m15.fp32, m17.fp32
+        msub        m18.fp32, m16.fp32, m14.fp32
+        msub        m19.fp32, m17.fp32, m15.fp32
+        mexp2       m18.fp32, m18.fp32              # alpha, 0 for the first block
+        mexp2       m19.fp32, m19.fp32
+        msub        m12.fp32, m12.fp32, m14.fp32
+        msub        m13.fp32, m13.fp32, m15.fp32
+        mexp2       m12.fp32, m12.fp32              # P
+        mexp2       m13.fp32, m13.fp32
+        mmv         m16x2, m14x2
+        mcvt        acc6.fp32, m18x2.fp32
+        mmul        acc5.fp32, acc5.fp32, acc6.fp32
+        mmacc       acc5.fp32, m12x2.fp32, m20x2.fp32   # l = alpha l + row sums of P
+        mmul        acc0.fp32, acc0.fp32, acc6.fp32
+        mmul        acc1.fp32, acc1.fp32, acc6.fp32
+        mmul        acc2.fp32, acc2.fp32, acc6.fp32
+        mmul        acc3.fp32, acc3.fp32, acc6.fp32
+        mcvt        m22.bf16, m12x2.fp32
+        mmacc.n     acc0.fp32, m22.bf16, m8.bf16    # O = alpha O + P V
+        mmacc.n     acc1.fp32, m22.bf16, m9.bf16
+        mmacc.n     acc2.fp32, m22.bf16, m10.bf16
+        mmacc.n     acc3.fp32, m22.bf16, m11.bf16
+        bne         a2, t5, 1b
+
+        mcvt        m12x2.fp32, acc5.fp32
+        mrec        m12.fp32, m12.fp32
+        mrec        m13.fp32, m13.fp32
+        mcvt        acc6.fp32, m12x2.fp32           # 1/l
+        mmul        acc0.fp32, acc0.fp32, acc6.fp32
+        mmul        acc1.fp32, acc1.fp32, acc6.fp32
+        mmul        acc2.fp32, acc2.fp32, acc6.fp32
+        mmul        acc3.fp32, acc3.fp32, acc6.fp32
+        mcvt        acc0.bf16, acc0.fp32
+        mcvt        acc1.bf16, acc1.fp32
+        mcvt        acc2.bf16, acc2.fp32
+        mcvt        acc3.bf16, acc3.fp32
+        msa.st.e16  acc0, (a6), s0      # O[i][0]
+        add         a6, a6, t1
+        msa.st.e16  acc1, (a6), s0      # O[i][N]
+        add         a6, a6, t1
+        msa.st.e16  acc2, (a6), s0      # O[i][2N]
+        add         a6, a6, t1
+        msa.st.e16  acc3, (a6), s0      # O[i][3N]
+----
+
+Each block of keys takes eight insn:mmacc[] for the products, two loads, and 23 other matrix instructions, using 23 matrix registers and seven accumulators.
+With the eighth accumulator, the scores of the next block are computed while the current block completes.
+
 [[ztt-insns]]
 === Instructions (in alphabetical order)
 
