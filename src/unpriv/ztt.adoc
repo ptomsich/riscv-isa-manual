@@ -33,7 +33,7 @@ NOTE: Thread contexts with live Ztt state cannot be migrated between harts with 
 [[ztt-model]]
 === Attached Matrix Programmer's Model
 
-[#norm:Ztt_state]#Ztt adds to each hart 32 matrix registers, `m0` to `m31`, _R_ accumulator registers, `acc0` to ``acc``__R__``−1``, and the read-only CSR csr:amenlen[].#
+[#norm:Ztt_state]#Ztt adds to each hart 32 matrix registers, `m0` to `m31`, _R_ accumulator registers, `acc0` to ``acc``__R__``−1``, and the read-only CSR csr:amenlenb[].#
 A matrix multiply reads its operands from matrix registers and accumulates into an accumulator register; the other operations read and write matrix registers.
 
 [[ztt-mregs]]
@@ -56,7 +56,7 @@ A matrix multiply reads its operands from matrix registers and accumulates into 
 It is defined analogously to the floating-point context-status field, csr::[fs].#
 // TS (tile status); MS is used by Zvt.
 
-[#norm:Ztt_mstatus_ts_off]#Attempts to execute any Ztt instruction, or to access csr:amenlen[], raise an illegal-instruction exception when csr:mstatus[ts] is Off.#
+[#norm:Ztt_mstatus_ts_off]#Attempts to execute any Ztt instruction, or to access csr:amenlenb[], raise an illegal-instruction exception when csr:mstatus[ts] is Off.#
 
 [#norm:Ztt_mstatus_ts_dirty]#When csr:mstatus[ts] is Initial or Clean, executing any instruction that changes Ztt state changes csr:mstatus[ts] to Dirty.
 Implementations may also change csr:mstatus[ts] from Initial or Clean to Dirty at any time, even when Ztt state does not change.#
@@ -69,7 +69,7 @@ Implementations may also change csr:mstatus[ts] from Initial or Clean to Dirty a
 [#norm:Ztt_vsstatus_ts]#When the hypervisor extension is present, a Ztt context-status field, csr::[ts], is added to csr:vsstatus[][26:25].
 It is defined analogously to the floating-point context-status field, csr::[fs].#
 
-[#norm:Ztt_vsstatus_ts_off]#When V=1, both csr:vsstatus[ts] and csr:mstatus[ts] are in effect: attempts to execute any Ztt instruction, or to access csr:amenlen[], raise an illegal-instruction exception when either field is Off.#
+[#norm:Ztt_vsstatus_ts_off]#When V=1, both csr:vsstatus[ts] and csr:mstatus[ts] are in effect: attempts to execute any Ztt instruction, or to access csr:amenlenb[], raise an illegal-instruction exception when either field is Off.#
 
 [#norm:Ztt_vsstatus_ts_dirty]#When V=1 and neither csr:vsstatus[ts] nor csr:mstatus[ts] is Off, executing any instruction that changes Ztt state changes both fields to Dirty.
 Implementations may also change csr:mstatus[ts] or csr:vsstatus[ts] from Initial or Clean to Dirty at any time, even when Ztt state does not change.#
@@ -88,13 +88,15 @@ Otherwise, it sets csr:mstatus[ts] to Initial, and, when V=1, csr:vsstatus[ts].#
 NOTE: insn:mdiscard[] need not write the registers.
 Software executes it where its use of Ztt state ends, so that the state is not saved on a context switch and an implementation can reclaim its storage.
 
-[[ztt-amenlen]]
-==== Tile Side (csr:amenlen[]) Register
+[[ztt-amenlenb]]
+==== Matrix Row Byte Length (csr:amenlenb[]) Register
 
-[#norm:Ztt_amenlen]#The _XLEN_-bit-wide read-only CSR csr:amenlen[] holds _N_.#
+[#norm:Ztt_amenlenb]#The _XLEN_-bit-wide read-only CSR csr:amenlenb[] holds 2__N__, the length in bytes of a row of a matrix register.#
 // OPEN: CSR address, in the unprivileged read-only range next to vlenb.
 
-NOTE: The value in csr:amenlen[] is a design-time constant in any implementation.
+NOTE: The value in csr:amenlenb[] is a design-time constant in any implementation.
+
+NOTE: Software uses the row length in bytes to step addresses and to scale leading dimensions, without converting from _N_.
 
 [[ztt-fcsr]]
 ==== Floating-Point Exception Flags and Rounding Mode
@@ -843,13 +845,11 @@ The code does not depend on _N_.
 # a0: &A[i][0]   a1: lda   a2: &W[j][0]   a3: ldw   (leading dimensions in elements)
 # a4: &C[i][j]   a5: ldc   a6: K, a multiple of N   a7: &bias[j]
 
-        csrr        t0, amenlen         # N
-        slli        t1, t0, 1           # N BF16 elements are 2N bytes
-        mul         t3, t0, a1
-        slli        t3, t3, 1
+        csrr        t1, amenlenb        # 2N: N BF16 elements are 2N bytes
+        srli        t0, t1, 1           # N
+        mul         t3, t1, a1
         add         t3, a0, t3          # &A[i+N][0]
-        mul         t4, t0, a3
-        slli        t4, t4, 1
+        mul         t4, t1, a3
         add         t4, a2, t4          # &W[j+N][0]
         mzero       acc0
         mzero       acc1
@@ -870,7 +870,7 @@ The code does not depend on _N_.
         sub         a6, a6, t0
         bnez        a6, 1b
 
-        slli        t2, t0, 2           # N FP32 elements are 4N bytes
+        slli        t2, t1, 1           # N FP32 elements are 4N bytes
         add         t2, a7, t2          # &bias[j+N]
         mls.st.e32  m4x2, (a7)          # bias[j] to bias[j+N-1] in every row
         mls.st.e32  m6x2, (t2)          # bias[j+N] to bias[j+2N-1]
@@ -889,8 +889,7 @@ The code does not depend on _N_.
         msa.st.e16  acc0, (a4), a5      # C[i][j]
         add         t5, a4, t1
         msa.st.e16  acc1, (t5), a5      # C[i][j+N]
-        mul         t6, t0, a5
-        slli        t6, t6, 1
+        mul         t6, t1, a5
         add         a4, a4, t6
         msa.st.e16  acc2, (a4), a5      # C[i+N][j]
         add         t5, a4, t1
