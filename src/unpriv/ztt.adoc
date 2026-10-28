@@ -5,14 +5,22 @@ The Ztt family of attached matrix extensions accelerates matrix multiplication a
 An attached matrix unit has its own architectural tile registers and is operated on by instructions in the hart's instruction stream, in program order.
 The extensions do not depend on the vector extensions.
 
-// Scope: what the family is, what it is not (no new vector state, no dependency on V),
-// and its dependency on the 64-bit encoding of the long-instruction extension (Zl).
-// One paragraph per point; normative statements tagged Ztt_*.
+Ztt instructions execute in program order, with precise exceptions (<<ztt-exceptions>>).
+An implementation may execute them in a unit decoupled from the hart; <<ztt-memory-model>> specifies how their memory accesses are ordered with those of the hart.
+
+[#norm:Ztt_no_vstate]#Ztt adds no state to the vector extensions and reads none of theirs.#
+Its registers are separate from the vector registers and from those of ext:zvt[] (<<ztt-zvt>>).
+
+[#norm:Ztt_enc]#Instructions that name datatypes use the 64-bit encoding of ext:zl[]; the other instructions use 32-bit encodings in the OP-VE major opcode.#
+
+The family consists of the base extension ext:ztt[] and extensions that add datatype combinations (<<ztt-extensions>>).
+Supervisor management of Ztt contexts is specified by ext:ssttctx[] in the privileged architecture.
 
 [NOTE]
 ====
-// Rationale: datatypes are a property of the instruction; registers are untyped
-// containers; geometry is the only implementation parameter visible to software.
+Datatypes are a property of the instruction, not of the registers: every instruction names the datatypes of its operands, and the registers are untyped containers.
+An instruction therefore depends on no configuration state, its legality and the registers it accesses are known when it is decoded, and a compiler, disassembler, or debugger reads its semantics from the instruction alone.
+The tile side _N_ is the only implementation parameter visible to software; like VLEN, it scales loop bounds and strides, but not register numbers or data layouts.
 ====
 
 [[ztt-params]]
@@ -663,6 +671,10 @@ The model depends only on _k_, so insn:mmacc[] and insn:mmacc.n[] produce the sa
 === Exception Handling
 
 [#norm:Ztt_exc_precise]#Ztt instructions raise exceptions precisely: when an exception is taken on a Ztt instruction, all older instructions have completed, and no younger instruction has changed architectural state.#
+[#norm:Ztt_exc_decode]#Ztt instructions other than loads and stores raise no exceptions other than illegal-instruction exceptions, which depend only on the instruction, on csr:mstatus[ts], csr:vsstatus[ts], and csr:frm[], and on XLEN.#
+
+NOTE: An implementation can therefore decide at decode whether such an instruction raises an exception, and dispatch it to a matrix unit without waiting for its completion.
+
 [#norm:Ztt_exc_ls_restart]#A Ztt load or store that raises an exception is restarted from its beginning when it is resumed.
 A load that raises an exception leaves its destination registers unchanged; a store that raises an exception may have written any part of its data to memory.#
 
