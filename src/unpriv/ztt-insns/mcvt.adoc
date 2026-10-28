@@ -1,0 +1,185 @@
+<<<
+[#insns-mcvt,reftext="Matrix Convert"]
+==== insn:mcvt[]
+
+Synopsis::
+Convert between datatypes and register classes
+
+Mnemonic::
+insn:mcvt[_md_``x``__G__._td_, _ms1_``x``__G__._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_md_[_sd_\]._td_, _ms1_``x``__G__._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_md_``x``__G__._td_, _ms1_[_s1_\]._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_md_[_sd_\]._td_, _ms1_[_s1_\]._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_md_``x``__G__._td_, _accs_._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_md_[_sd_\]._td_, _accs_._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_accd_._td_, _ms1_``x``__G__._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_accd_._td_, _ms1_[_s1_\]._t1_[, _rm_\][, sat\]] +
+insn:mcvt[_accd_._td_, _accs_._t1_[, _rm_\][, sat\]]
++
+``x``__G__ is omitted for _G_ = 1, and the slot index is written for every slot operand, including `[0]`.
+
+Pseudoinstructions::
+insn:mmv[md,ms1] {rightarrow} insn:mcvt[md.uint16,ms1.uint16] +
+insn:mmv[md``x``__G__,ms1``x``__G__] {rightarrow} insn:mcvt[md``x``__G__.uint16,ms1``x``__G__.uint16] +
+insn:mmv[accd,accs] {rightarrow} insn:mcvt[accd.uint32,accs.uint32] +
+insn:mmv[mdx2,accs] {rightarrow} insn:mcvt[mdx2.uint32,accs.uint32] +
+insn:mmv[accd,ms1x2] {rightarrow} insn:mcvt[accd.uint32,ms1x2.uint32]
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '010', attr: ['CVT'] },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: '00000' },
+    { bits: 7, name: 'op' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: 'rm' },
+    { bits: 1, name: 'sat' },
+    { bits: 5, name: 't1' },
+    { bits: 3, name: 's1' },
+    { bits: 2, name: '00' },
+    { bits: 3, name: 'kc' },
+    { bits: 3, name: 'sd' }
+], config:{lanes: 2, hspace: 1024}}
+....
++
+[%autowidth]
+[%header,cols="<,<,<"]
+|===
+|`op` |Destination |Source
+|`0000000` |matrix register |matrix register
+|`0000001` |matrix register |accumulator register
+|`0000010` |accumulator register |matrix register
+|`0000011` |accumulator register |accumulator register
+|===
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _ms1_ | input | Source: a matrix-register operand or an accumulator register of datatype _t1_
+| _md_ | output | Destination: a matrix-register operand or an accumulator register of datatype _td_
+|===
+
+Column Field::
+[#norm:mcvt_kc]#`kc` gives _C_ = 2^`kc`^{nbsp}{times}{nbsp}__N__, the number of columns of both operands.
+A matrix-register operand of element width _w_ occupies _G_ = 2^`kc`^{nbsp}{times}{nbsp}__w__/16 registers.#
++
+* With an accumulator operand, _C_ = _N_ and `kc` is 0.
+* With `kc` = 0, a matrix-register operand narrower than 16 bits is a slot (_G_ < 1), selected by `sd` or `s1`; wider operands occupy _w_/16 registers.
+* With `kc` > 0, both operands are matrix registers, and each _G_ is 1, 2, or 4.
+* `sd` and `s1` are 0 for an operand that is not a slot.
++
+[source,asm]
+----
+mcvt  m4[1].e4m3, acc1.fp32, rne     # kc = 0, sd = 1
+mcvt  acc0.fp32, m2[3].e2m1          # kc = 0, s1 = 3
+mcvt  m6.bf16, m8[0].e4m3            # kc = 0, s1 = 0; m6 is not a slot
+mcvt  m8x2.bf16, m0.int8             # kc = 1: G = 2 and G = 1
+----
++
+In assembly, `kc` follows from the operands, which must hold the same number of columns, and the slot index is written for every slot operand.
+
+Description::
+[#norm:mcvt_op]#insn:mcvt[] converts each element of the source from _t1_ to _td_, as specified in <<ztt-ops-mcvt>>, rounding as selected by `rm` and saturating as selected by `sat`.#
+[#norm:mcvt_op_merge]#A slot destination leaves the other slots of its register unchanged.#
+[#norm:mcvt_op_overlap]#The source is read in full before the destination is written.#
+[#norm:mcvt_fflags]#Floating-point exception flags accrue in csr:fflags[].#
++
+insn:mmv[] copies registers without changing a bit, as insn:mcvt[] between unsigned integer datatypes of equal width.
+
+Exceptions::
+[#norm:mcvt_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* The pair of _t1_ and _td_ is not supported (<<ztt-ops-mcvt>>), or names a reserved type code.
+* `kc` is greater than 5, or `kc` is not 0 and an operand is an accumulator register.
+* A matrix-register operand's _G_ is not 1, 2, or 4 and the operand is not a slot, or is not valid for its datatype, or names a group that is not aligned (<<ztt-groups>>).
+* A slot index is 16/__w__ or more, or is not 0 for an operand that is not a slot.
+* An accumulator register number is not less than _R_, or is odd for a 64-bit datatype.
+* `rm` is reserved for the datatypes (<<ztt-rounding>>), or `rm` is DYN and csr:frm[] holds a reserved value.
+* `sat` is 0 and reserved for the datatypes (<<ztt-saturation>>).
+* A reserved field, bits 24:20, 38:37, or 57:56, is not 0.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec64 = MCVT(cls, md, ms1, td, rm, sat, t1, kc, sd, s1)
+  <-> sd @ kc @ 0b00 @ s1 @ t1 @ sat @ rm @ td @ 0b00 @ ZTT_ZLMAJ @ 0b11
+    @ mcvt_op(cls) @ 0b00000 @ ms1 @ 0b010 @ md @ ZTT_ZLOP @ 0b11111
+
+mapping mcvt_op : mcvt_classes <-> bits(7) = {
+  MCVT_MM <-> 0b0000000,
+  MCVT_MA <-> 0b0000001,
+  MCVT_AM <-> 0b0000010,
+  MCVT_AA <-> 0b0000011
+}
+
+function clause execute MCVT(cls, md, ms1, td, rm, sat, t1, kc, sd, s1) = {
+  /* Every check depends only on the encoding, R and frm. */
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  if not(ztt_mcvt_supported(t1, td)) then return Illegal_Instruction();
+  if unsigned(kc) > 5 then return Illegal_Instruction();
+  let (d_is_m, s_is_m) = mcvt_is_m(cls);
+  if not(d_is_m & s_is_m) & kc != 0b000 then return Illegal_Instruction();
+  /* A matrix-register operand is a group of G = 2^kc * w / 16 registers, or a slot. */
+  let dst : option(ztt_operand) = ztt_cvt_operand(d_is_m, md, td, kc, sd);
+  let src : option(ztt_operand) = ztt_cvt_operand(s_is_m, ms1, t1, kc, s1);
+  if dst == None() | src == None() then return Illegal_Instruction();
+  if not(ztt_sat_valid(t1, td, sat)) then return Illegal_Instruction();
+  let rmd : option(ztt_rounding) = ztt_rounding_mode(t1, td, rm);   /* DYN reads frm */
+  if rmd == None() then return Illegal_Instruction();
+
+  let N = ztt_N();
+  let C = 2 ^ unsigned(kc) * N;
+  /* The source is read in full first, as the operands may overlap. */
+  let x = ztt_read_operand(the(src), N, C);
+  var flags : bits(5) = zeros();
+  foreach (r from 0 to (N - 1)) {
+    foreach (c from 0 to (C - 1)) {
+      let (e, f) = ztt_convert(td, t1, ztt_element(x, r, c), the(rmd), sat);
+      ztt_write_element(the(dst), r, c, e);   /* a slot leaves the other slots unchanged */
+      flags = flags | f;
+    }
+  };
+  accrue_fflags(flags);
+  ztt_set_dirty();
+  RETIRE_SUCCESS
+}
+
+function mcvt_is_m(cls : mcvt_classes) -> (bool, bool) =
+  match cls {
+    MCVT_MM => (true, true),
+    MCVT_MA => (true, false),
+    MCVT_AM => (false, true),
+    MCVT_AA => (false, false)
+  }
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztt[] (<<ext:ztt>>)
+|0.1
+|Draft
+
+|Zttfp64mm, Zttfp32fp64mm, Ztti16i64mm (<<ztt-ext-acc64>>), for 64-bit datatypes
+|0.1
+|Draft
+|===

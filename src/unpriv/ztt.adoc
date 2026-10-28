@@ -415,6 +415,35 @@ The first word is laid out as an R-type instruction, with the destination and so
 ], config:{lanes: 2, hspace: 1024}}
 ....
 
+[#norm:Ztt_enc64_cvt]#The conversion format, `fmt` = 010, holds `kc` in bits 60:58, the slot index `sd` of the destination in bits 63:61, and the slot index `s1` of the source in bits 55:53; bits 24:20, 38:37, and 57:56 are reserved.#
+`op` selects the register classes of the destination and the source.
+
+[[ztt-enc64-cvt-fig]]
+.Conversion format.
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '010', attr: ['CVT'] },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: '00000' },
+    { bits: 7, name: 'op' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: 'rm' },
+    { bits: 1, name: 'sat' },
+    { bits: 5, name: 't1' },
+    { bits: 3, name: 's1' },
+    { bits: 2, name: '00' },
+    { bits: 3, name: 'kc' },
+    { bits: 3, name: 'sd' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
 [[ztt-enc-columns]]
 ==== Operand Columns
 
@@ -432,7 +461,8 @@ The column field applies to the instruction groups as follows:
 |Instructions |Column field
 |Matrix multiplies |_C_ is _K_; each source occupies the group that holds _K_ columns of its datatype.
 |Elementwise operations, compares, and bitwise operations on matrix registers |All operands have one element width, and therefore one group size.
-|Conversions, and operations with an accumulator operand |_C_ is _N_, the columns of an accumulator, and `kc` is 0; an operand narrower than 16 bits is a slot.
+|Conversions |_C_ as encoded, and _N_ when an operand is an accumulator register; with _C_ = _N_, an operand narrower than 16 bits is a slot.
+|Other operations with an accumulator operand |_C_ is _N_, the columns of an accumulator, and `kc` is 0; an operand narrower than 16 bits is a slot.
 |Loads and stores |A single matrix-register operand: the 32-bit forms encode its group size _G_ directly, as log~2~ _G_ in 2 bits.
 |===
 
@@ -878,12 +908,13 @@ Rotates serve hashing, checksums, and the permutation of packed fields.
 [[ztt-ops-mcvt]]
 ==== Moves and Conversions
 
-[#norm:Ztt_mcvt]#insn:mcvt[] converts an _N_ {times} _N_ tile from the source datatype to the destination datatype, element (_r_, _c_) of the source to element (_r_, _c_) of the destination.
+[#norm:Ztt_mcvt]#insn:mcvt[] converts element (_r_, _c_) of its source from the source datatype to element (_r_, _c_) of its destination in the destination datatype.
 Its source and destination are each a matrix-register operand or an accumulator register; the four combinations have separate encodings.#
 
-[#norm:Ztt_mcvt_tile]#A matrix-register operand of element width _w_ designates a register for _w_ = 16, slot _s_ of a register for _w_ < 16, and a group of _w_/16 registers for _w_ > 16.
+[#norm:Ztt_mcvt_tile]#Both operands hold _C_ columns (<<ztt-enc-columns>>), and _C_ is _N_ when either is an accumulator register.
+A matrix-register operand of element width _w_ < 16 with _C_ = _N_ is slot _s_ of a register.
 An accumulator operand designates an accumulator register, or an accumulator pair for a 64-bit datatype.#
-[#norm:Ztt_mcvt_slot]#A slot index of 16/__w__ or more, or a nonzero slot index for _w_ {ge} 16, raises an illegal-instruction exception.#
+[#norm:Ztt_mcvt_slot]#A slot index of 16/__w__ or more, or a nonzero slot index for an operand that is not a slot, raises an illegal-instruction exception.#
 [#norm:Ztt_mcvt_merge]#Writing a slot leaves the other slots of the register unchanged.#
 [#norm:Ztt_mcvt_overlap]#The source is read in full before the destination is written, so the two may overlap.#
 
@@ -901,10 +932,11 @@ mcvt  m4[0].e4m3, acc0.fp32                  # FP8 into slot 0, rounding mode DY
 mcvt  m4[1].e4m3, acc1.fp32, rne             # slot 1: m4 is now an N x 2N operand
 mcvt  m6[2].int4, acc2.int32, sat            # INT32 to INT4, saturating
 mcvt  acc0.fp32, m2.bf16                     # widen a BF16 tile into an accumulator
+mcvt  m8x2.bf16, m0.int8                     # C = 2N: a whole INT8 register into BF16
 mcvt  acc1.int8, acc1.int32, sat             # in place, for an e8 accumulator store
 ----
 
-In assembly, the slot index follows the register name in brackets.
+In assembly, the slot index follows the register name in brackets, and is written for every slot operand, including `[0]`.
 
 [NOTE]
 ====
@@ -928,6 +960,8 @@ The pseudoinstruction insn:mmv[] copies registers without conversion, using inte
 |`mmv md, ms` |`mcvt md.uint16, ms.uint16`
 |``mmv md``x__G__``, ms``x__G__ |``mcvt md``x__G__``.uint16, ms``x__G__``.uint16``
 |`mmv accd, accs` |`mcvt accd.uint32, accs.uint32`
+|`mmv mdx2, accs` |`mcvt mdx2.uint32, accs.uint32`
+|`mmv accd, msx2` |`mcvt accd.uint32, msx2.uint32`
 |===
 
 [[ztt-sw]]
@@ -1064,6 +1098,8 @@ Each iteration issues 16 insn:mmacc[] for four loads, four address updates and o
 // Synopsis, Mnemonic, Encoding, Description, Exceptions, Included in, SAIL code
 //
 // and tags at least the normative rules <mnemonic>_op and <mnemonic>_enc.
+
+include::ztt-insns/mcvt.adoc[]
 
 include::ztt-insns/mmacc.adoc[]
 

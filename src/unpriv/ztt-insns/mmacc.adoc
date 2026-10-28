@@ -6,8 +6,10 @@ Synopsis::
 Matrix multiply-accumulate
 
 Mnemonic::
-insn:mmacc[_md_._td_, _ms1_._t1_, _ms2_._t2_[, _rm_][, sat]] +
-insn:mmacc.n[_md_._td_, _ms1_._t1_, _ms2_._t2_[, _rm_][, sat]]
+insn:mmacc[_md_._td_, _ms1_``x``__G1__._t1_, _ms2_``x``__G2__._t2_[, _rm_\][, sat\]] +
+insn:mmacc.n[_md_._td_, _ms1_``x``__G1__._t1_, _ms2_``x``__G2__._t2_[, _rm_\][, sat\]]
++
+``x``__G__ is omitted for _G_ = 1.
 
 Encoding (mmacc)::
 [wavedrom, , svg]
