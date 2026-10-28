@@ -217,7 +217,8 @@ The datatypes of an instruction's operands are given by operand specifiers:
 
 <<ztt-encoding-64>> gives their positions in the encoding.
 In assembly, a datatype follows its register name, separated by a dot, as in `acc2.fp32`; the rounding mode and `sat`, when given, are trailing operands, as in F, and an omitted rounding mode is DYN for floating-point datatypes.
-A group of _G_ registers is written with the suffix ``x``__G__, as in `m4x2.int8`, also where the datatype requires the group, as in `m12x2.fp32`.
+Every matrix-register operand is written with its group size as the suffix ``x``__G__, as in `m4x2.int8`, also where the datatype requires the group, as in `m12x2.fp32`; the suffix `x1` is omitted.
+An assembler rejects operands whose numbers of columns differ (<<ztt-enc-columns>>).
 [#norm:Ztt_spec_rsv]#A specifier field value that the operation does not use, or that is reserved for the named datatype, raises an illegal-instruction exception.#
 
 [[ztt-rounding]]
@@ -341,9 +342,89 @@ NOTE: The images are architectural so that debuggers, and contexts migrated betw
 [[ztt-encoding-64]]
 ==== 64-Bit Instructions
 
-// Typed instructions in the Zl 64-bit encoding: the first word carries md, ms1, ms2 and the
-// operation; the second word carries the three operand specifiers and format-specific fields.
-// OPEN: depends on Zl defining its 64-bit format and granting a major opcode.
+[#norm:Ztt_enc64]#Typed instructions use the 64-bit instruction encoding of the long-instruction extension (Zl), shown in <<ztt-enc64-fig>>.#
+The first word is laid out as an R-type instruction, with the destination and source register numbers at their standard positions; the second word carries the operand specifiers.
+
+[[ztt-enc64-fig]]
+.64-bit typed instruction format.
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: 'fmt' },
+    { bits: 5, name: 'ms1/rs1' },
+    { bits: 5, name: 'ms2/rs2' },
+    { bits: 7, name: 'op' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: 'f2' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: 'rm' },
+    { bits: 1, name: 'sat' },
+    { bits: 5, name: 't1' },
+    { bits: 5, name: 't2' },
+    { bits: 6, name: 'f6' }
+], config:{lanes: 2, hspace: 1024}}
+....
+// OPEN: zlop and zlmaj are the 64-bit major opcode, to be granted by Zl; Zl has not yet
+// defined its 64-bit formats, and whether zlop belongs to the opcode follows its 48-bit formats.
+
+[%autowidth,float="center",align="center",cols="<,<,<",options="header"]
+|===
+|Bits |Field |Contents
+|11:7 |`md` |Destination register
+|14:12 |`fmt` |Format: 001 for the matrix multiplies
+|19:15 |`ms1`/`rs1` |First source register
+|24:20 |`ms2`/`rs2` |Second source register
+|31:25 |`op` |Operation within the format
+|38:37 |`f2` |Format-specific
+|47:39 |`td`, `rm`, `sat` |Destination specifier (<<ztt-specifiers>>)
+|52:48 |`t1` |Source specifier of the first source
+|57:53 |`t2` |Source specifier of the second source
+|63:58 |`f6` |Format-specific
+|===
+
+[#norm:Ztt_enc64_rsv]#A field that an instruction does not use is reserved and must be zero; an instruction in which it is not raises an illegal-instruction exception.#
+
+[#norm:Ztt_enc64_mm]#In the matrix-multiply format, `f6`[2:0] holds the column field `kc` (<<ztt-enc-columns>>).#
+
+[[ztt-enc-columns]]
+==== Operand Columns
+
+[#norm:Ztt_cols_same]#All matrix-register operands of an instruction have the same number of columns, _C_.#
+[#norm:Ztt_cols_kc]#A typed instruction encodes _C_ = 2^`kc`^{nbsp}{times}{nbsp}__N__ in a 3-bit field `kc`; the values 6 and 7 are reserved.
+An operand of element width _w_ then occupies _G_ = 2^`kc`^{nbsp}{times}{nbsp}__w__/16 registers.#
+[#norm:Ztt_cols_g]#An operand with _G_ < 1 is a slot of a register (<<ztt-mreg-layout>>), and is valid only where _C_ = _N_ and the instruction encodes a slot index.
+An instruction for which an operand's _G_ is otherwise less than 1, is greater than 4, or is not valid for its datatype (<<ztt-groups>>) raises an illegal-instruction exception.#
+
+_G_ does not depend on _N_, so the registers an instruction accesses follow from its register fields, `kc`, and the element widths of its datatypes.
+The column field applies to the instruction groups as follows:
+
+[%autowidth,float="center",align="center",cols="<,<",options="header"]
+|===
+|Instructions |Column field
+|Matrix multiplies |_C_ is _K_; each source occupies the group that holds _K_ columns of its datatype.
+|Elementwise operations, compares, and bitwise operations on matrix registers |All operands have one element width, and therefore one group size.
+|Conversions, and operations with an accumulator operand |_C_ is _N_, the columns of an accumulator, and `kc` is 0; an operand narrower than 16 bits is a slot.
+|Loads and stores |A single matrix-register operand: the 32-bit forms encode its group size _G_ directly, as log~2~ _G_ in 2 bits.
+|===
+
+[#norm:Ztt_cols_mixed]#In a matrix multiply whose sources differ in element width, both hold _K_ columns, so the narrower source occupies the smaller group.#
+For example, with the mixed-width extension:
+
+[source,asm]
+----
+mmacc    acc0.int32, m0.int4, m2x2.int8      # K = 4N, kc = 2
+mmacc    acc1.int32, m4.int2, m8x4.int8      # K = 8N, kc = 3
+----
+
+An INT2 source in one register holds 8__N__ columns, so its INT8 partner occupies four registers.
+A ratio of element widths greater than four is not encodable, because the wider source would occupy more than four registers.
+
+NOTE: One field serves instructions with any number of matrix-register operands.
+Encoding the group size of each operand separately would express the same set of instructions, with more bits and with encodings whose operands differ in their numbers of columns.
 
 [[ztt-legality]]
 ==== Supported Type Combinations and Illegal Instructions
@@ -591,7 +672,7 @@ There is no A^T^ {times} B form; a transposing load supplies A^T^.
 [#norm:Ztt_mmacc_shape]#A is the _N_ {times} _K_ matrix held by its operand (<<ztt-groups>>).
 For insn:mmacc[], B is the _N_ {times} _K_ matrix held by its operand.
 For insn:mmacc.n[], B is the _K_ {times} _N_ matrix whose row _k_ is row _k_ mod _N_ of columns ⌊__k__/__N__⌋{nbsp}{times}{nbsp}__N__ to ⌊__k__/__N__⌋{nbsp}{times}{nbsp}__N__ + _N_ − 1 of its operand.#
-[#norm:Ztt_mmacc_k]#An instruction whose two source operands have different numbers of columns raises an illegal-instruction exception.#
+[#norm:Ztt_mmacc_k]#The two source operands have the same number of columns, _K_ (<<ztt-enc-columns>>).#
 
 NOTE: For element widths below 16 bits, the rows of B for insn:mmacc.n[] are the stacked slots of <<ztt-mreg-layout>>, as written by insn:mls.sst[].
 
@@ -958,6 +1039,8 @@ Each iteration issues 16 insn:mmacc[] for four loads, four address updates and o
 // Synopsis, Mnemonic, Encoding, Description, Exceptions, Included in, SAIL code
 //
 // and tags at least the normative rules <mnemonic>_op and <mnemonic>_enc.
+
+include::ztt-insns/mmacc.adoc[]
 
 [[ztt-encoding-map]]
 === Encoding Map
