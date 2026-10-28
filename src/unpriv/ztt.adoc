@@ -556,7 +556,7 @@ NOTE: With _LD_ = 0, every row is read from the same memory row, so a load repli
 
 * [#norm:Ztt_ls_st]#The strided forms, insn:mls.st[] and insn:mss.st[], transfer memory element (_r_, _c_).#
 * [#norm:Ztt_ls_tst]#The transposing forms, insn:mls.tst[] and insn:mss.tst[], transfer memory element (_c_, _r_).
-They are reserved for element sizes below 8 bits.#
+They are reserved for the element size `p6`.#
 
 [#norm:Ztt_ls_acc]#The accumulator forms, insn:mla.st[], insn:msa.st[], insn:mla.tst[], and insn:msa.tst[], transfer an accumulator register as the strided and transposing forms do, with element sizes of 4, 8, 16, and 32 bits.
 A load of a narrower element size writes the low bits of each 32-bit element and zeroes the others; a store writes the low bits.#
@@ -565,8 +565,9 @@ They are reserved unless a 64-bit accumulation extension (<<ztt-ext-acc64>>) is 
 
 NOTE: A row-major matrix and the transpose of a column-major matrix load with the strided form.
 
-NOTE: A row-major B of elements narrower than 8 bits has no transposing load, so software packs it in advance into the layout of B^T^, as for the matrix multiplies of ext:zvvmm[].
-That costs nothing for data prepared once and reused, such as inference weights.
+NOTE: In a transposing load of elements narrower than 8 bits, each byte of memory row _c_ holds element _c_ of 8/__w__ consecutive register rows.
+An implementation transposes bytes, as for 8-bit elements, and distributes the _w_-bit fields of each byte to their rows by a fixed rearrangement; a transposing store reverses both steps.
+A row-major B of 2-, 4-, or 8-bit elements thus loads as B^T^ for insn:mmacc[], while a B of 6-bit elements is packed in advance.
 
 [[ztt-memory-partial]]
 ==== Partial-Tile Forms
