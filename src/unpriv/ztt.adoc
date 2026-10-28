@@ -930,6 +930,52 @@ Their datatypes are unsigned integer datatypes, which give only the element widt
 NOTE: A rotate right by _n_ is a rotate left by −__n__ modulo the element width, so one operation provides both directions.
 Rotates serve hashing, checksums, and the permutation of packed fields.
 
+[[ztt-ops-reduce]]
+==== Reductions
+
+[#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of an _N_ {times} _N_ source to its largest or smallest element, and write the result to every element of that row or column of the destination.
+In the row form, written `.row`, element (_i_, _j_) of the destination is the reduction of row _i_ of the source; in the column form, written `.col`, of column _j_.#
+[#norm:Ztt_red_operands]#The source and destination are both accumulator registers, or both matrix-register operands that designate a tile as for insn:mcvt[], and have one datatype.
+The source is read in full before the destination is written.#
+[#norm:Ztt_red_fp]#For floating-point datatypes, the reductions are the maximumNumber and minimumNumber operations of IEEE 754-2019, as for insn:mmax[] and insn:mmin[], and raise NV for a signaling NaN.
+An `rm` other than 0 and `sat` are reserved for them.#
+[#norm:Ztt_red_types]#The reductions support the datatypes of insn:mmax[] and insn:mmin[] (<<ztt-ops-arith>>).#
+
+NOTE: The result is replicated along the reduced dimension, so it is an operand of elementwise operations, which take no broadcasts, and every instruction writes its whole destination.
+
+Sums are matrix multiplies by a matrix of ones, held in a matrix register loaded once.
+insn:mmacc[] with ones as B adds the sum of row _i_ of A, over _K_ columns, to every element of row _i_ of C, and insn:mmacc.n[] with ones as A adds the sum of column _j_ of B to every element of column _j_ of C.
+The sums are computed as specified in <<ztt-ops-mmacc>>, exactly for integer datatypes.
+
+[source,asm]
+----
+mmacc       acc1.int32, m0x2.int8, m8x2.int8   # m8x2 holds ones: row sums of A
+mmacc.n     acc2.int32, m8x2.int8, m4x2.int8   # column sums of B
+mcvt        m10x2.fp32, acc0.fp32              # an accumulator is summed from a matrix register
+mmacc       acc3.fp32, m10x2.fp32, m12x2.fp32  # m12x2 holds ones
+mredmax.row acc4.fp32, acc0.fp32               # row maxima of attention scores
+----
+
+NOTE: The row and column sums of the sources are the zero-point corrections of a quantized matrix multiply.
+
+[NOTE]
+====
+Other reductions are composed from these instructions:
+
+[%autowidth,float="center",align="center",cols="<,<",options="header"]
+|===
+|Reduction |Composition
+|Weighted sum |insn:mmacc[] with the weights in place of ones
+|Prefix sum |insn:mmacc[] with a triangular matrix of ones
+|Sum of squares, mean |insn:mmul[], then a sum; a sum, then insn:mmul[] by 1/__K__
+|Largest magnitude |insn:mredmax[] and insn:mredmin[], a negation, and insn:mmax[]
+|Any, all |insn:mredmax[] and insn:mredmin[] of a mask
+|Count |A mask ANDed with ones, then a sum
+|Index of the maximum |insn:mredmax[], insn:mcmpeq[], insn:mbsel[] of an index matrix, and insn:mredmin[]
+|Whole tile |The row form, then the column form
+|===
+====
+
 [[ztt-ops-mcvt]]
 ==== Moves and Conversions
 
