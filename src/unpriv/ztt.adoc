@@ -242,7 +242,7 @@ It takes the integer encodings when the source and destination datatypes are all
 |===
 
 The floating-point encodings are those of <<norm:dyn_round_enc>>, with 101 assigned to round to odd; the integer encodings 000 to 011 are those of csr:vxrm[].
-[#norm:Ztt_rm_int_ext]#The integer encodings RMM, RTZ, and RUP round to nearest with ties away from zero, toward zero, and toward +∞, respectively.#
+[#norm:Ztt_rm_int_ext]#The integer encodings RMM, RTZ, and RUP round to nearest with ties away from zero, toward zero, and toward +{inf}, respectively.#
 
 NOTE: Integer RMM is the rounding of the requantization in common inference libraries, so a right shift by insn:mldexp[] can match them exactly.
 [#norm:Ztt_rm_dyn]#DYN selects the rounding mode in csr:frm[]; as in F, the behavior when csr:frm[] holds a reserved value is reserved.#
@@ -512,7 +512,7 @@ The implementation discloses the algorithm and the values of its parameters.#
 * [#norm:Ztt_num_rnd_rto]#If `rnd` = `rto`, _S_ is rounded to the datatype of C with round to odd.#
 * [#norm:Ztt_num_rnd_xct]#If `rnd` = `xct`, _S_ is not rounded.#
 
-[#norm:Ztt_num_acc]#Each group then updates the element as C~__i__,__j__~ ← round~rm~(C~__i__,__j__~ + _S_), rounding as selected by `rm`.#
+[#norm:Ztt_num_acc]#Each group then updates the element as C~__i__,__j__~ {leftarrow} round~rm~(C~__i__,__j__~ + _S_), rounding as selected by `rm`.#
 
 [#norm:Ztt_num_disclose]#An implementation discloses its (_P_, `psm`, `rnd`) for each combination of source element widths and C datatype that it supports.
 The disclosed values apply to every datatype combination with those widths, and to both insn:mmacc[] and insn:mmacc.n[].#
@@ -585,7 +585,7 @@ Accumulator registers stay 32 bits wide, so an implementation of any of them kee
 [[ztt-ops-mmacc]]
 ==== Matrix Multiply
 
-[#norm:Ztt_mmacc]#insn:mmacc[] computes C ← C + A {times} B^T^, and insn:mmacc.n[] computes C ← C + A {times} B, where C is an accumulator register and A and B are matrix-register operands.#
+[#norm:Ztt_mmacc]#insn:mmacc[] computes C {leftarrow} C + A {times} B^T^, and insn:mmacc.n[] computes C {leftarrow} C + A {times} B, where C is an accumulator register and A and B are matrix-register operands.#
 There is no A^T^ {times} B form; a transposing load supplies A^T^.
 
 [#norm:Ztt_mmacc_shape]#A is the _N_ {times} _K_ matrix held by its operand (<<ztt-groups>>).
@@ -638,18 +638,18 @@ The supported combinations are those of a single input width that machine-learni
 .Matrix-multiply combinations in use.
 [%autowidth,float="center",align="center",cols="<,<,<",options="header"]
 |===
-|A {times} B → C |Use |Provided by
-|E2M3 or E3M2 {times} E4M3 or E5M2 → FP32 |MX training with FP6 and FP8 operands |Ztt
-|TF32 {times} TF32 → FP32 |Training on FP32 data |Ztt
-|INT2 {times} INT2 → INT32 |2-bit and ternary networks |Ztt
-|INT8 {times} INT8 → INT32 |FP64 emulation by the Ozaki scheme |Ztt
-|INT4 {times} INT8 → INT32 |4-bit weights, 8-bit activations |Mixed-width extension
-|INT2 {times} INT8 → INT32 |Ternary weights, 8-bit activations |Mixed-width extension
-|E2M1 {times} E4M3 → FP32 |FP4 weights, FP8 activations |Mixed-width extension
-|FP64 {times} FP64 → FP64 |Double-precision GEMM |Zttfp64mm
-|FP32 {times} FP32 → FP64 |Mixed-precision solvers |Zttfp32fp64mm
-|INT16 {times} INT16 → INT64 |Ozaki-scheme variants |Ztti16i64mm
-|INT4 or FP8 {times} BF16 → FP32 |Weight-only quantization |None: needs per-group scales
+|A {times} B {rightarrow} C |Use |Provided by
+|E2M3 or E3M2 {times} E4M3 or E5M2 {rightarrow} FP32 |MX training with FP6 and FP8 operands |Ztt
+|TF32 {times} TF32 {rightarrow} FP32 |Training on FP32 data |Ztt
+|INT2 {times} INT2 {rightarrow} INT32 |2-bit and ternary networks |Ztt
+|INT8 {times} INT8 {rightarrow} INT32 |FP64 emulation by the Ozaki scheme |Ztt
+|INT4 {times} INT8 {rightarrow} INT32 |4-bit weights, 8-bit activations |Mixed-width extension
+|INT2 {times} INT8 {rightarrow} INT32 |Ternary weights, 8-bit activations |Mixed-width extension
+|E2M1 {times} E4M3 {rightarrow} FP32 |FP4 weights, FP8 activations |Mixed-width extension
+|FP64 {times} FP64 {rightarrow} FP64 |Double-precision GEMM |Zttfp64mm
+|FP32 {times} FP32 {rightarrow} FP64 |Mixed-precision solvers |Zttfp32fp64mm
+|INT16 {times} INT16 {rightarrow} INT64 |Ozaki-scheme variants |Ztti16i64mm
+|INT4 or FP8 {times} BF16 {rightarrow} FP32 |Weight-only quantization |None: needs per-group scales
 |===
 
 Mixed widths fit the register model unchanged: the narrower source occupies the smaller register group, so that both have the same _K_.

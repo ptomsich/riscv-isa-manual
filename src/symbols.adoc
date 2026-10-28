@@ -15,6 +15,7 @@
 :interpunct: ·
 :pm: ±
 :rightarrow: →
+:leftarrow: ←
 :asterisk: &#42;
 // https://docs.asciidoctor.org/asciidoc/latest/subs/replacements/
 // https://github.com/asciidoctor/asciidoctor/issues/1578
