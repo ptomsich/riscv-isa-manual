@@ -1058,16 +1058,18 @@ The pseudoinstruction insn:mmv[] copies registers without conversion, using inte
 |===
 
 [[ztt-ops-mmvxm]]
-==== Moves to X Registers
+==== Moves Between Matrix and X Registers
 
 [#norm:Ztt_mmvxm]#insn:mmv.x.m[] copies element _k_ of a matrix register to X register `rd`, where _k_ is the value of X register `rs2` and element _k_ is element (⌊__k__/__C__⌋, _k_ mod _C_) of the register, with _C_ = 16__N__/__w__ (<<ztt-mreg-layout>>).
 The element width _w_, 8, 16, 32, or 64 bits, is given by the suffix `e8`, `e16`, `e32`, or `e64`; the element is sign-extended to XLEN bits.#
 [#norm:Ztt_mmvxm_range]#If _k_ is not less than _NC_, the number of elements in the register, `rd` is written with 0.#
+[#norm:Ztt_mmvmx]#insn:mmv.m.x[] writes the low _w_ bits of X register `rs1` to element _k_ of a matrix register, numbered as for insn:mmv.x.m[], where _k_ is the value of X register `rs2`, and leaves the other elements unchanged.
+If _k_ is not less than _NC_, no element is written.#
 [#norm:Ztt_mmvxm_rv32]#For XLEN = 32, `e64` raises an illegal-instruction exception.#
-insn:mmv.x.m[] is a 32-bit instruction (<<ztt-encoding-32>>).
+insn:mmv.x.m[] and insn:mmv.m.x[] are 32-bit instructions (<<ztt-encoding-32>>).
 
 NOTE: insn:mmv.x.m[] is the only Ztt instruction that writes an X register.
-A floating-point value continues in an F register through insn:fmv.w.x[] or insn:fmv.d.x[], and an accumulator element is first converted into a matrix register with insn:mcvt[].
+A floating-point value continues in an F register through insn:fmv.w.x[] or insn:fmv.d.x[], and an accumulator element is read or written through a matrix register with insn:mcvt[].
 
 [source,asm]
 ----
@@ -1076,25 +1078,26 @@ mredmax.col acc0.fp32, acc0.fp32             # every element holds the maximum o
 mcvt        m4x2.fp32, acc0.fp32
 mmv.x.m.e32 a0, m4, x0                       # element 0
 fmv.w.x     fa0, a0
+mmv.m.x.e32 m4, a1, t1                       # element t1 of m4 = a1
 ----
 
 [[ztt-ops-const]]
 ==== Constant Matrices
 
-[#norm:Ztt_mmvmx]#insn:mmv.m.x[] writes the low _w_ bits of X register `rs1` to every element of a matrix register, for an element width _w_ of 8, 16, 32, or 64 bits given by the suffix `e8`, `e16`, `e32`, or `e64`.#
+[#norm:Ztt_mfill]#insn:mfill[] writes the low _w_ bits of X register `rs1` to every element of a matrix register, for an element width _w_ of 8, 16, 32, or 64 bits given by the suffix `e8`, `e16`, `e32`, or `e64`.#
 [#norm:Ztt_mid]#insn:mid.row[] and insn:mid.col[] write to element (_r_, _c_) of a matrix-register operand its row number _r_ or its column number _c_, modulo 2^__w__^, for an element width _w_ of 8, 16, 32, or 64 bits given by the suffix.
 The operand occupies a group of _G_ = 1, 2, or 4 registers (<<ztt-groups>>), and is an _N_ {times} 16__GN__/__w__ matrix.#
-[#norm:Ztt_const_rv32]#For XLEN = 32, insn:mmv.m.x[] with `e64` raises an illegal-instruction exception.#
+[#norm:Ztt_const_rv32]#For XLEN = 32, insn:mfill[] with `e64` raises an illegal-instruction exception.#
 They are 32-bit instructions (<<ztt-encoding-32>>).
 
-NOTE: A value narrower than 8 bits is written by insn:mmv.m.x[] with `e8` and the value replicated in each byte, as 0x11 for INT4 ones.
+NOTE: A value narrower than 8 bits is written by insn:mfill[] with `e8` and the value replicated in each byte, as 0x11 for INT4 ones.
 
 Other constant matrices are composed from these:
 
 [source,asm]
 ----
 li          t0, 0x3f80
-mmv.m.x.e16 m8, t0                                # BF16 ones
+mfill.e16   m8, t0                                # BF16 ones
 mid.col.e16 m9                                    # m9(r, c) = c, the indices for an argmax
 mid.row.e16 m10                                   # m10(r, c) = r
 mcmpge      m11.uint16, m9.uint16, m10.uint16     # c >= r
