@@ -297,7 +297,6 @@ The element width of each datatype is given in <<ztt-type-code-table>>.
 NOTE: Elements are contiguous along each row, as in the input tiles of ext:zvvmm[], so a row-major matrix, or the transpose of a column-major one, loads without rearrangement.
 
 [#norm:Ztt_slots]#For an element width _w_ < 16, columns _sN_ to (__s__ + 1)__N__ − 1 form slot _s_ of the register, an _N_ {times} _N_ matrix; a register has 16/__w__ slots.#
-[#norm:Ztt_slots_stack]#An instruction that reads such a register as a 16__N__/__w__ {times} _N_ matrix stacks its slots vertically: row _k_ of that matrix is row _k_ mod _N_ of slot ⌊__k__/__N__⌋.#
 
 [[ztt-groups]]
 ==== Register Groups
@@ -541,7 +540,7 @@ Their encodings are 32-bit (<<ztt-encoding-32>>), except for the partial-tile fo
 [#norm:Ztt_ls_esize_reg]#The element size determines the shape of the operand matrix and the size of the register group, as for an operand of that element width.#
 
 [[ztt-memory-addressing]]
-==== Strided, Transposing, and Stacked Forms
+==== Strided and Transposing Forms
 
 [#norm:Ztt_ls_addr]#These forms take the base address in `rs1` and the leading dimension _LD_, in elements, in `rs2`.
 They view memory as a matrix whose element (_d_, _k_) is at bit offset (_d_{nbsp}{times}{nbsp}__LD__ + _k_) {times} _w_ from the base address, where _w_ is the element size; address arithmetic is modulo 2^XLEN^.#
@@ -558,9 +557,6 @@ NOTE: With _LD_ = 0, every row is read from the same memory row, so a load repli
 * [#norm:Ztt_ls_st]#The strided forms, insn:mls.st[] and insn:mss.st[], transfer memory element (_r_, _c_).#
 * [#norm:Ztt_ls_tst]#The transposing forms, insn:mls.tst[] and insn:mss.tst[], transfer memory element (_c_, _r_).
 They are reserved for element sizes below 8 bits.#
-* [#norm:Ztt_ls_sst]#The stacked form, insn:mls.sst[], views the register as a 16__N__/__w__ {times} _N_ matrix of stacked slots (<<ztt-mreg-layout>>) and loads its element (_k_, _j_) from memory element (_k_, _j_).
-It is reserved for element sizes of 16 bits and above.
-There is no stacked store.#
 
 [#norm:Ztt_ls_acc]#The accumulator forms, insn:mla.st[], insn:msa.st[], insn:mla.tst[], and insn:msa.tst[], transfer an accumulator register as the strided and transposing forms do, with element sizes of 4, 8, 16, and 32 bits.
 A load of a narrower element size writes the low bits of each 32-bit element and zeroes the others; a store writes the low bits.#
@@ -569,26 +565,13 @@ They are reserved unless a 64-bit accumulation extension (<<ztt-ext-acc64>>) is 
 
 NOTE: A row-major matrix and the transpose of a column-major matrix load with the strided form.
 
-[NOTE]
-====
-The stacked form loads a row-major B for C += A {times} B when its elements are narrower than 16 bits.
-Each memory row of B lands contiguously in one slot, so no element is rearranged.
-
-Software could instead prepare such a B in memory.
-That costs nothing for data prepared once and reused, such as inference weights, or for large multiplies whose operands software packs anyway.
-It costs an extra pass over B, and a second buffer, when:
-
-* B is produced on every use, as gradients and activations are in training;
-* the multiply is bandwidth-bound, as in decoding, where B is read only once;
-* the elements are narrower than 8 bits and the hart has no vector unit, so the rearrangement runs as scalar code.
-
-A strided load followed by a register-to-register permutation is no substitute: one strided load gathers the rows of B only if they are contiguous in memory, and otherwise one load and one move are needed per slot.
-====
+NOTE: A row-major B of elements narrower than 8 bits has no transposing load, so software packs it in advance into the layout of B^T^, as for the matrix multiplies of ext:zvvmm[].
+That costs nothing for data prepared once and reused, such as inference weights.
 
 [[ztt-memory-partial]]
 ==== Partial-Tile Forms
 
-[#norm:Ztt_ls_partial]#Each strided, transposing, stacked, and accumulator form has a partial-tile variant that also takes a row count and a column count from X registers.
+[#norm:Ztt_ls_partial]#Each strided, transposing, and accumulator form has a partial-tile variant that also takes a row count and a column count from X registers.
 It transfers only the elements whose row index is below the row count and whose column index is below the column count; a count at least the number of rows or columns of the operand matrix selects all of them.#
 [#norm:Ztt_ls_partial_load]#A partial-tile load writes zero to the elements it does not transfer.#
 [#norm:Ztt_ls_partial_store]#A partial-tile store does not access memory for the elements it does not transfer.#
@@ -653,7 +636,7 @@ A release annotation, such as on `amoswap.w.rl`, also orders older Ztt memory op
 [[ztt-matmul-numerics]]
 ==== Matrix-Multiply Numerics
 
-A floating-point matrix multiply updates element (_i_, _j_) of C with the _K_ products of element (_i_, _k_) of A and element (_k_, _j_) of the multiplier, which is B^T^ for insn:mmacc[] and B for insn:mmacc.n[].
+A floating-point matrix multiply updates element (_i_, _j_) of C with the _K_ products of element (_i_, _k_) of A and element (_j_, _k_) of B.
 
 [#norm:Ztt_num_sdp]#Consecutive products form sub-dot-products of _W_ products, where _W_ is 16 divided by the larger source element width, or 1 when that width is 16 bits or more.#
 [#norm:Ztt_num_steps]#Consecutive sub-dot-products form steps of _N_ sub-dot-products.
@@ -675,13 +658,12 @@ The implementation discloses the algorithm and the values of its parameters.#
 [#norm:Ztt_num_acc]#Each group then updates the element as C~__i__,__j__~ {leftarrow} round~rm~(C~__i__,__j__~ + _S_), rounding as selected by `rm`.#
 
 [#norm:Ztt_num_disclose]#An implementation discloses its (_P_, `psm`, `rnd`) for each combination of source element widths and C datatype that it supports.
-The disclosed values apply to every datatype combination with those widths, and to both insn:mmacc[] and insn:mmacc.n[].#
+The disclosed values apply to every datatype combination with those widths.#
 
 [#norm:Ztt_num_special]#Special values are handled as if each product were exact and each sum and rounding of the model were the corresponding IEEE 754 operation: an invalid product or sum, or a NaN source, produces the canonical NaN.#
 [#norm:Ztt_num_flags]#The flags accrued in csr:fflags[] are the bitwise OR of the flags raised by the operations of the model, in any order.#
 
 NOTE: _P_, `psm`, and `rnd` are the parameters `G`, `psm`, and `rnd` of the floating-point matrix multiplies of ext:zvvmm[], with `rm` in place of `frm`, so the same disclosure describes both.
-The model depends only on _k_, so insn:mmacc[] and insn:mmacc.n[] produce the same result for the same matrices.
 
 [[ztt-exceptions]]
 === Exception Handling
@@ -721,7 +703,7 @@ Extensions that add matrix-multiply datatype combinations are named `Ztt` + _inp
 [[ztt-ext-acc64]]
 ==== 64-Bit Accumulation Extensions
 
-[#norm:Ztt_ext_acc64]#Each extension in <<ztt-acc64-table>> adds its datatype combinations to insn:mmacc[] and insn:mmacc.n[].
+[#norm:Ztt_ext_acc64]#Each extension in <<ztt-acc64-table>> adds its datatype combinations to insn:mmacc[].
 Implementing any of them adds accumulator pairs (<<ztt-acc-layout>>) and the `e64` accumulator loads and stores (<<ztt-memory-addressing>>).#
 
 [[ztt-acc64-table]]
@@ -749,15 +731,20 @@ Accumulator registers stay 32 bits wide, so an implementation of any of them kee
 [[ztt-ops-mmacc]]
 ==== Matrix Multiply
 
-[#norm:Ztt_mmacc]#insn:mmacc[] computes C {leftarrow} C + A {times} B^T^, and insn:mmacc.n[] computes C {leftarrow} C + A {times} B, where C is an accumulator register and A and B are matrix-register operands.#
-There is no A^T^ {times} B form; a transposing load supplies A^T^.
+[#norm:Ztt_mmacc]#insn:mmacc[] computes C {leftarrow} C + A {times} B^T^, where C is an accumulator register and A and B are matrix-register operands.#
+Transposing loads supply A^T^ and B^T^ (<<ztt-memory-addressing>>).
 
-[#norm:Ztt_mmacc_shape]#A is the _N_ {times} _K_ matrix held by its operand (<<ztt-groups>>).
-For insn:mmacc[], B is the _N_ {times} _K_ matrix held by its operand.
-For insn:mmacc.n[], B is the _K_ {times} _N_ matrix whose row _k_ is row _k_ mod _N_ of columns ⌊__k__/__N__⌋{nbsp}{times}{nbsp}__N__ to ⌊__k__/__N__⌋{nbsp}{times}{nbsp}__N__ + _N_ − 1 of its operand.#
+[#norm:Ztt_mmacc_shape]#A and B are the _N_ {times} _K_ matrices held by their operands (<<ztt-groups>>).#
 [#norm:Ztt_mmacc_k]#The two source operands have the same number of columns, _K_ (<<ztt-enc-columns>>).#
 
-NOTE: For element widths below 16 bits, the rows of B for insn:mmacc.n[] are the stacked slots of <<ztt-mreg-layout>>, as written by insn:mls.sst[].
+[NOTE]
+====
+Ztt has a single matrix-multiply form, as ext:zvvmm[] has, which reads both sources along _K_, by rows:
+
+* A transposing load of B and insn:mmacc[] give the result of a form that multiplies by B, because the numerics depend only on _k_ (<<ztt-matmul-numerics>>).
+* A form that multiplies by B reads B by columns, which an implementation that reads both sources by rows executes at a fraction of the rate or with an added transpose unit, so kernels would be tuned to each implementation.
+* Kernels, packing routines, and compilers carry over between ext:zvvmm[] and Ztt.
+====
 
 [#norm:Ztt_mmacc_spec]#The destination specifier names the datatype of C, which is both read and written; the source specifiers name the datatypes of A and B.#
 Widening is expressed by these datatypes alone:
@@ -766,7 +753,7 @@ Widening is expressed by these datatypes alone:
 ----
 mmacc    acc2.fp32, m0.e4m3, m4.e5m2          # FP8 into FP32, rounding mode DYN
 mmacc    acc1.int32, m0x2.uint8, m2x2.int8    # K = 4N
-mmacc.n  acc0.fp32, m0.bf16, m8.bf16, rne    # C += A x B
+mmacc    acc0.fp32, m0.bf16, m8.bf16, rne    # rounding mode RNE
 ----
 
 [#norm:Ztt_mmacc_combos]#Ztt supports the datatype combinations of <<ztt-mmacc-table>>, in which A and B have the same element width and may otherwise differ.
@@ -997,13 +984,14 @@ An `rm` other than 0 and `sat` are reserved for them.#
 NOTE: The result is replicated along the reduced dimension, so it is an operand of elementwise operations, which take no broadcasts, and every instruction writes its whole destination.
 
 Sums are matrix multiplies by a matrix of ones, held in a matrix register loaded once.
-insn:mmacc[] with ones as B adds the sum of row _i_ of A, over _K_ columns, to every element of row _i_ of C, and insn:mmacc.n[] with ones as A adds the sum of column _j_ of B to every element of column _j_ of C.
+insn:mmacc[] with ones as B adds the sum of row _i_ of A, over _K_ columns, to every element of row _i_ of C.
+With ones as A, it adds the sum of row _j_ of B, which is column _j_ of a matrix loaded with a transposing load, to every element of column _j_ of C.
 The sums are computed as specified in <<ztt-ops-mmacc>>, exactly for integer datatypes.
 
 [source,asm]
 ----
 mmacc       acc1.int32, m0x2.int8, m8x2.int8   # m8x2 holds ones: row sums of A
-mmacc.n     acc2.int32, m8x2.int8, m4x2.int8   # column sums of B
+mmacc       acc2.int32, m8x2.int8, m4x2.int8   # m4x2 holds B^T: column sums of B
 mcvt        m10x2.fp32, acc0.fp32              # an accumulator is summed from a matrix register
 mmacc       acc3.fp32, m10x2.fp32, m12x2.fp32  # m12x2 holds ones
 mredmax.row acc4.fp32, acc0.fp32               # row maxima of attention scores
@@ -1074,7 +1062,7 @@ mcvt    m4[0].int8, acc0.int32, sat            # saturate to INT8
 ----
 ====
 
-NOTE: A tile written into slot _s_ forms columns _sN_ to (__s__ + 1)__N__ − 1 of an A operand, or rows _sN_ to (__s__ + 1)__N__ − 1 of the B operand of insn:mmacc.n[], so the result of one matrix multiply feeds the next without a transpose.
+NOTE: A tile written into slot _s_ forms columns _sN_ to (__s__ + 1)__N__ − 1 of a source operand, so the result of one matrix multiply feeds the next as A without a transpose.
 
 The pseudoinstruction insn:mmv[] copies registers without conversion, using integer datatypes so that every bit is preserved:
 
@@ -1354,7 +1342,13 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
 
 1:      mls.st.e16  m4x4, (a2), a3      # N keys
         add         a2, a2, t2
-        mls.st.e16  m8x4, (a4), a5      # N values
+        mls.tst.e16 m8, (a4), a5        # V^T: N columns of N values
+        add         t6, a4, t1
+        mls.tst.e16 m9, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m10, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m11, (t6), a5
         add         a4, a4, t3
         mzero       acc4
         mmacc       acc4.fp32, m0.bf16, m4.bf16     # scores
@@ -1382,10 +1376,10 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         mmul.col    acc2.fp32, acc2.fp32, m18x2.fp32
         mmul.col    acc3.fp32, acc3.fp32, m18x2.fp32
         mcvt        m22.bf16, m12x2.fp32
-        mmacc.n     acc0.fp32, m22.bf16, m8.bf16    # O = alpha O + P V
-        mmacc.n     acc1.fp32, m22.bf16, m9.bf16
-        mmacc.n     acc2.fp32, m22.bf16, m10.bf16
-        mmacc.n     acc3.fp32, m22.bf16, m11.bf16
+        mmacc       acc0.fp32, m22.bf16, m8.bf16    # O = alpha O + P V
+        mmacc       acc1.fp32, m22.bf16, m9.bf16
+        mmacc       acc2.fp32, m22.bf16, m10.bf16
+        mmacc       acc3.fp32, m22.bf16, m11.bf16
         bne         a2, t5, 1b
 
         mcvt        m12x2.fp32, acc5.fp32
@@ -1408,7 +1402,7 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         msa.st.e16  acc3, (a6), s0      # O[i][3N]
 ----
 
-Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, two loads, and 21 other matrix instructions, using 23 matrix registers and six accumulators.
+Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, five loads, and 21 other matrix instructions, using 23 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
 
 [[ztt-example-flash-2p]]
