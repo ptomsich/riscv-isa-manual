@@ -53,8 +53,9 @@ A matrix multiply reads its operands from matrix registers and accumulates into 
 [#norm:Ztt_accreg]#Each accumulator register holds _N_ {times} _N_ 32-bit elements.#
 [#norm:Ztt_R]#There are _R_ = 8 accumulator registers.#
 
-NOTE: Flash attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys, and needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes (<<ztt-example-flash>>).
-Eight accumulators hold an output of _d_ = 5__N__ in that way, and of _d_ = 6__N__ without the second score accumulator; a larger output is computed in slices of _d_, each of which recomputes the scores.
+NOTE: Flash attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys.
+In one pass (<<ztt-example-flash>>), it needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes, so eight accumulators hold an output of _d_ = 5__N__, or of _d_ = 6__N__ without the overlap.
+In two passes (<<ztt-example-flash-2p>>), the pass that computes the output holds nothing else, so eight accumulators hold an output of _d_ = 8__N__, a head dimension of 128 at _N_ = 16.
 Fewer accumulators would slice the common head dimensions of 64 and 128 at small _N_, while more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
 
 [[ztt-mstatus]]
@@ -1409,6 +1410,189 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
 
 Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, two loads, and 21 other matrix instructions, using 23 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
+
+[[ztt-example-flash-2p]]
+==== Example: Flash Attention in Two Passes
+
+The single-pass form of <<ztt-example-flash>> rescales its output and row sums in every block of keys.
+The following code moves that work out of its loops, at the cost of storing and loading two scratch tiles per block, and computes the same O for a head dimension _d_ = 8__N__:
+
+* Pass 1 computes S^T^ = K Q^T^, one key per row and one query per column, keeps a running maximum elementwise, and stores S^T^ in BF16.
+One insn:mredmax.col[] then gives the maximum _m_ of each query down its column.
+* Pass 2a computes P̃^T^, the exponentials 2^__x__^ of the elements _x_ of S^T^ − _m_, sums them elementwise, and stores them with a transposing store, so that each scratch tile holds P̃ with one query per row.
+A matrix multiply with an identity matrix (<<ztt-ops-const>>) transposes the sums, so that their row sums _l_ give 1/__l__ in column 0, where the column form of a broadcast reads it.
+* Pass 2b computes O = P̃ V in eight accumulators without rescaling, and scales by 1/__l__ once.
+Transposing loads supply V^T^, so that insn:mmacc[] computes P̃ (V^T^)^T^.
+
+Q is scaled by _s_ log~2~ e in advance, so no loop operates elementwise on an accumulator.
+The scratch buffers hold _L_ {times} _N_ BF16 elements each, as consecutive _N_ {times} _N_ tiles with a leading dimension of _N_.
+
+[source,asm]
+----
+# a0: &Q[i][0]   a1: ldq   a2: &K[0][0]   a3: ldk   a4: &V[0][0]   a5: ldv
+# a6: &O[i][0]   a7: L, a multiple of N   s0: ldo   (leading dimensions in elements)
+# s1: s log2(e) in BF16, for the scale s of the scores
+# s2: scratch for S^T   s3: scratch for P   (2LN bytes each)
+
+        csrr        t1, amenlenb        # 2N
+        srli        t0, t1, 1           # N, the leading dimension of the scratch tiles
+        mul         t4, t1, t0          # 2N^2 bytes, one scratch tile
+        slli        s5, t1, 2           # 4N BF16 elements are 8N bytes
+        mul         t2, t1, a3          # N rows of K
+        mul         t3, t1, a5          # N rows of V
+        mul         t5, a7, a3
+        slli        t5, t5, 1
+        add         t5, a2, t5          # &K[L][0]
+        mls.st.e16  m0x4, (a0), a1      # Q: N rows, 8N columns
+        add         t6, a0, s5
+        mls.st.e16  m4x4, (t6), a1
+        mmul        m0.bf16, m0.bf16, s1
+        mmul        m1.bf16, m1.bf16, s1
+        mmul        m2.bf16, m2.bf16, s1
+        mmul        m3.bf16, m3.bf16, s1
+        mmul        m4.bf16, m4.bf16, s1
+        mmul        m5.bf16, m5.bf16, s1
+        mmul        m6.bf16, m6.bf16, s1
+        mmul        m7.bf16, m7.bf16, s1
+        li          t6, 0xff800000      # -infinity
+        mfill.e32   m18, t6
+        mfill.e32   m19, t6             # m18x2: running maxima
+
+        mv          s4, s2              # pass 1: S^T = K Q^T, running maxima
+1:      mls.st.e16  m8x4, (a2), a3      # N keys
+        add         t6, a2, s5
+        mls.st.e16  m12x4, (t6), a3
+        add         a2, a2, t2
+        mzero       acc0
+        mmacc       acc0.fp32, m8.bf16, m0.bf16     # C[k][q] = sum of K[k][c] Q[q][c]
+        mmacc       acc0.fp32, m9.bf16, m1.bf16
+        mmacc       acc0.fp32, m10.bf16, m2.bf16
+        mmacc       acc0.fp32, m11.bf16, m3.bf16
+        mmacc       acc0.fp32, m12.bf16, m4.bf16
+        mmacc       acc0.fp32, m13.bf16, m5.bf16
+        mmacc       acc0.fp32, m14.bf16, m6.bf16
+        mmacc       acc0.fp32, m15.bf16, m7.bf16
+        mcvt        m16x2.fp32, acc0.fp32
+        mmax        m18.fp32, m18.fp32, m16.fp32
+        mmax        m19.fp32, m19.fp32, m17.fp32
+        mcvt        m20.bf16, m16x2.fp32
+        mss.st.e16  m20, (s4), t0       # S^T tile
+        add         s4, s4, t4
+        bne         a2, t5, 1b
+        mredmax.col m18x2.fp32, m18x2.fp32          # m[k][q] = maximum of query q
+        sub         t5, s4, s2
+        add         t5, s3, t5          # end of the scratch for P
+
+        mfill.e32   m22, x0
+        mfill.e32   m23, x0             # m22x2: sums
+        mv          a2, s2              # pass 2a: P^T = 2^(S^T - m), sums
+        mv          t6, s3
+2:      mls.st.e16  m20, (a2), t0
+        add         a2, a2, t4
+        mcvt        m16x2.fp32, m20.bf16
+        msub        m16.fp32, m16.fp32, m18.fp32
+        msub        m17.fp32, m17.fp32, m19.fp32
+        mexp2       m16.fp32, m16.fp32
+        mexp2       m17.fp32, m17.fp32
+        madd        m22.fp32, m22.fp32, m16.fp32
+        madd        m23.fp32, m23.fp32, m17.fp32
+        mcvt        m21.bf16, m16x2.fp32
+        mss.tst.e16 m21, (t6), t0       # P tile, one query per row
+        add         t6, t6, t4
+        bne         a2, s4, 2b
+
+        li          t6, 0x3f800000      # 1.0
+        mfill.e32   m24, t6
+        mfill.e32   m25, t6             # m24x2: ones
+        mid.row.e32 m28x2
+        mid.col.e32 m30x2
+        mcmpeq      m26.uint32, m28.uint32, m30.uint32
+        mcmpeq      m27.uint32, m29.uint32, m31.uint32
+        mand        m26.uint32, m26.uint32, m24.uint32
+        mand        m27.uint32, m27.uint32, m25.uint32  # m26x2: identity
+        mzero       acc0
+        mmacc       acc0.fp32, m26x2.fp32, m22x2.fp32   # transposed: one query per row
+        mcvt        m22x2.fp32, acc0.fp32
+        mzero       acc0
+        mmacc       acc0.fp32, m22x2.fp32, m24x2.fp32   # l_q along row q
+        mcvt        m22x2.fp32, acc0.fp32
+        mrec        m22.fp32, m22.fp32
+        mrec        m23.fp32, m23.fp32
+
+        mzero       acc0                # pass 2b: O = P V, from V^T
+        mzero       acc1
+        mzero       acc2
+        mzero       acc3
+        mzero       acc4
+        mzero       acc5
+        mzero       acc6
+        mzero       acc7
+3:      mls.st.e16  m20, (s3), t0       # P tile
+        add         s3, s3, t4
+        mls.tst.e16 m8, (a4), a5        # V^T: N columns of N values
+        add         t6, a4, t1
+        mls.tst.e16 m9, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m10, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m11, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m12, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m13, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m14, (t6), a5
+        add         t6, t6, t1
+        mls.tst.e16 m15, (t6), a5
+        add         a4, a4, t3
+        mmacc       acc0.fp32, m20.bf16, m8.bf16
+        mmacc       acc1.fp32, m20.bf16, m9.bf16
+        mmacc       acc2.fp32, m20.bf16, m10.bf16
+        mmacc       acc3.fp32, m20.bf16, m11.bf16
+        mmacc       acc4.fp32, m20.bf16, m12.bf16
+        mmacc       acc5.fp32, m20.bf16, m13.bf16
+        mmacc       acc6.fp32, m20.bf16, m14.bf16
+        mmacc       acc7.fp32, m20.bf16, m15.bf16
+        bne         s3, t5, 3b
+
+        mmul.col    acc0.fp32, acc0.fp32, m22x2.fp32   # O / l
+        mmul.col    acc1.fp32, acc1.fp32, m22x2.fp32
+        mmul.col    acc2.fp32, acc2.fp32, m22x2.fp32
+        mmul.col    acc3.fp32, acc3.fp32, m22x2.fp32
+        mmul.col    acc4.fp32, acc4.fp32, m22x2.fp32
+        mmul.col    acc5.fp32, acc5.fp32, m22x2.fp32
+        mmul.col    acc6.fp32, acc6.fp32, m22x2.fp32
+        mmul.col    acc7.fp32, acc7.fp32, m22x2.fp32
+        mcvt        acc0.bf16, acc0.fp32
+        mcvt        acc1.bf16, acc1.fp32
+        mcvt        acc2.bf16, acc2.fp32
+        mcvt        acc3.bf16, acc3.fp32
+        mcvt        acc4.bf16, acc4.fp32
+        mcvt        acc5.bf16, acc5.fp32
+        mcvt        acc6.bf16, acc6.fp32
+        mcvt        acc7.bf16, acc7.fp32
+        msa.st.e16  acc0, (a6), s0      # O[i][0]
+        add         a6, a6, t1
+        msa.st.e16  acc1, (a6), s0      # O[i][N]
+        add         a6, a6, t1
+        msa.st.e16  acc2, (a6), s0
+        add         a6, a6, t1
+        msa.st.e16  acc3, (a6), s0
+        add         a6, a6, t1
+        msa.st.e16  acc4, (a6), s0
+        add         a6, a6, t1
+        msa.st.e16  acc5, (a6), s0
+        add         a6, a6, t1
+        msa.st.e16  acc6, (a6), s0
+        add         a6, a6, t1
+        msa.st.e16  acc7, (a6), s0      # O[i][7N]
+----
+
+Per block of keys, the passes take the eight insn:mmacc[] of pass 1 and the eight of pass 2b, and 13 other matrix instructions besides loads and stores, none of which operates elementwise on an accumulator.
+Pass 2b holds only the output in accumulators, so eight cover _d_ = 8__N__ with the values read once.
+
+NOTE: Scratch tiles in BF16 round the scores before the exponential, which the single-pass form does not; FP32 tiles avoid this at twice their traffic.
+Scaling Q in BF16 rounds the scaled queries.
 
 [[ztt-insns]]
 === Instructions (in alphabetical order)
