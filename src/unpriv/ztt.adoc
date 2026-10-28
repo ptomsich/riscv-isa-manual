@@ -2,14 +2,11 @@
 == Ztt Family of Attached Matrix Extensions
 
 The Ztt family of attached matrix extensions accelerates matrix multiplication and the surrounding elementwise, conversion, and reduction operations for machine-learning and high-performance computing workloads.
-An attached matrix unit has its own architectural tile registers and is operated on by instructions in the hart's instruction stream, in program order.
-The extensions do not depend on the vector extensions.
+An attached matrix unit has its own architectural registers and executes instructions from the hart's instruction stream in program order, with precise exceptions (<<ztt-exceptions>>).
+It may be decoupled from the hart; <<ztt-memory-model>> specifies how its memory accesses are ordered with those of the hart.
 
-Ztt instructions execute in program order, with precise exceptions (<<ztt-exceptions>>).
-An implementation may execute them in a unit decoupled from the hart; <<ztt-memory-model>> specifies how their memory accesses are ordered with those of the hart.
-
-[#norm:Ztt_no_vstate]#Ztt adds no state to the vector extensions and reads none of theirs.#
-Its registers are separate from the vector registers and from those of ext:zvt[] (<<ztt-zvt>>).
+[#norm:Ztt_no_vstate]#The extensions do not depend on the vector extensions: they add no vector state and read none.#
+Their registers are separate from the vector registers and from those of ext:zvt[] (<<ztt-zvt>>).
 
 [#norm:Ztt_enc]#Instructions that name datatypes use the 64-bit encoding of ext:zl[]; the other instructions use 32-bit encodings in the OP-VE major opcode.#
 
