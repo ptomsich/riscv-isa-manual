@@ -313,6 +313,7 @@ Groups are used only where an operand's shape must match another operand's:
 * the sources of a matrix multiply, which hold _K_ columns each, so that _K_ grows with the group and a narrower source occupies a smaller group;
 * conversions between matrix registers of different element widths, which keep the number of columns;
 * an _N_ {times} _N_ matrix of a datatype wider than 16 bits that is combined with an accumulator register;
+* index matrices (<<ztt-ops-const>>), whose values follow the operand's shape;
 * loads and stores, which transfer several registers with one instruction.
 
 An elementwise operation pairs corresponding elements whatever the shape, so it operates on single registers.
@@ -1054,6 +1055,31 @@ mredmax.col acc0.fp32, acc0.fp32             # every element holds the maximum o
 mcvt        m4x2.fp32, acc0.fp32
 mmv.x.m.e32 a0, m4, x0                       # element 0
 fmv.w.x     fa0, a0
+----
+
+[[ztt-ops-const]]
+==== Constant Matrices
+
+[#norm:Ztt_mmvmx]#insn:mmv.m.x[] writes the low _w_ bits of X register `rs1` to every element of a matrix register, for an element width _w_ of 8, 16, 32, or 64 bits given by the suffix `e8`, `e16`, `e32`, or `e64`.#
+[#norm:Ztt_mid]#insn:mid.row[] and insn:mid.col[] write to element (_r_, _c_) of a matrix-register operand its row number _r_ or its column number _c_, modulo 2^__w__^, for an element width _w_ of 8, 16, 32, or 64 bits given by the suffix.
+The operand occupies a group of _G_ = 1, 2, or 4 registers (<<ztt-groups>>), and is an _N_ {times} 16__GN__/__w__ matrix.#
+[#norm:Ztt_const_rv32]#For XLEN = 32, insn:mmv.m.x[] with `e64` raises an illegal-instruction exception.#
+They are 32-bit instructions (<<ztt-encoding-32>>).
+
+NOTE: A value narrower than 8 bits is written by insn:mmv.m.x[] with `e8` and the value replicated in each byte, as 0x11 for INT4 ones.
+
+Other constant matrices are composed from these:
+
+[source,asm]
+----
+li          t0, 0x3f80
+mmv.m.x.e16 m8, t0                                # BF16 ones
+mid.col.e16 m9                                    # m9(r, c) = c, the indices for an argmax
+mid.row.e16 m10                                   # m10(r, c) = r
+mcmpge      m11.uint16, m9.uint16, m10.uint16     # c >= r
+mand        m11.uint16, m11.uint16, m8.uint16     # BF16 ones on and above the diagonal
+mcmpeq      m12.uint16, m9.uint16, m10.uint16     # c = r
+mand        m12.uint16, m12.uint16, m8.uint16     # BF16 identity
 ----
 
 [[ztt-sw]]
