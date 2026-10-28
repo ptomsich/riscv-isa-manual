@@ -1247,6 +1247,73 @@ The loop ends when the first pointer into A reaches the end of its rows, so it n
 
 Each iteration issues 16 insn:mmacc[] for four loads, four address updates and one branch, using 16 matrix registers.
 
+[[ztt-example-softmax]]
+==== Example: Softmax
+
+The following code computes Y = softmax(X) for _N_ rows of _L_ FP32 elements, normalizing each row, for an _L_ that is a multiple of _N_.
+It processes _N_ {times} _N_ tiles, each in a group of two registers, in three passes: the maximum of each row, the sum of the exponentials of each row, and the normalized exponentials.
+For the row maximum _m_, it computes e^__y__^ for _y_ = _x_ − _m_ as 2^__z__^ for _z_ = _y_ log~2~ e; row maxima and row sums are replicated along each row, so they combine elementwise with the tiles.
+
+[source,asm]
+----
+# a0: &X[i][0]   a1: ldx   a2: &Y[i][0]   a3: ldy   (leading dimensions in elements)
+# a4: L, a multiple of N
+
+        csrr        t1, amenlenb        # 2N
+        slli        t2, t1, 1           # N FP32 elements are 4N bytes
+        slli        a4, a4, 2
+        add         a4, a0, a4          # &X[i][L]
+        li          t3, 0x3fb8aa3b      # log2(e) in FP32
+        li          t4, 0xff800000      # -infinity
+        mfill.e32   m2, t4
+        mfill.e32   m3, t4
+        li          t4, 0x3f800000      # 1.0
+        mfill.e32   m4, t4
+        mfill.e32   m5, t4              # m4x2: ones
+
+        mv          t5, a0              # pass 1: row maxima
+1:      mls.st.e32  m0x2, (t5), a1
+        add         t5, t5, t2
+        mmax        m2.fp32, m2.fp32, m0.fp32
+        mmax        m3.fp32, m3.fp32, m1.fp32
+        bne         t5, a4, 1b
+        mredmax.row m2x2.fp32, m2x2.fp32
+        mmul        m2.fp32, m2.fp32, t3    # m log2(e)
+        mmul        m3.fp32, m3.fp32, t3
+
+        mzero       acc0                # pass 2: row sums
+        mv          t5, a0
+2:      mls.st.e32  m0x2, (t5), a1
+        add         t5, t5, t2
+        mmul        m0.fp32, m0.fp32, t3
+        mmul        m1.fp32, m1.fp32, t3
+        msub        m0.fp32, m0.fp32, m2.fp32
+        msub        m1.fp32, m1.fp32, m3.fp32
+        mexp2       m0.fp32, m0.fp32
+        mexp2       m1.fp32, m1.fp32
+        mmacc       acc0.fp32, m0x2.fp32, m4x2.fp32 # adds the row sums to every column
+        bne         t5, a4, 2b
+        mcvt        m6x2.fp32, acc0.fp32
+        mrec        m6.fp32, m6.fp32
+        mrec        m7.fp32, m7.fp32
+
+3:      mls.st.e32  m0x2, (a0), a1      # pass 3: normalized exponentials
+        add         a0, a0, t2
+        mmul        m0.fp32, m0.fp32, t3
+        mmul        m1.fp32, m1.fp32, t3
+        msub        m0.fp32, m0.fp32, m2.fp32
+        msub        m1.fp32, m1.fp32, m3.fp32
+        mexp2       m0.fp32, m0.fp32
+        mexp2       m1.fp32, m1.fp32
+        mmul        m0.fp32, m0.fp32, m6.fp32
+        mmul        m1.fp32, m1.fp32, m7.fp32
+        mss.st.e32  m0x2, (a2), a3
+        add         a2, a2, t2
+        bne         a0, a4, 3b
+----
+
+The third pass computes the exponentials again instead of loading them stored by the second, which trades three instructions per register for a store of each tile.
+
 [[ztt-insns]]
 === Instructions (in alphabetical order)
 
