@@ -933,7 +933,7 @@ mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon
 |===
 |Operation |Second operand |Use
 |insn:madd[] |accumulator, matrix register, broadcast |Combining results, residual add, bias
-|insn:mmul[] |accumulator, broadcast |Gating, per-channel scale
+|insn:mmul[] |accumulator, broadcast, scalar |Gating, per-channel and per-tensor scale
 |insn:msmul[], insn:mldexp[] |scalar, broadcast |Requantization, per tensor or per channel
 |insn:mmax[], insn:mmin[] |scalar |ReLU and clamping
 |===
@@ -949,6 +949,7 @@ NOTE: Other operations on accumulators, such as GELU, convert to a matrix regist
 madd.row  acc0.fp32, acc0.fp32, m12x2.fp32     # bias per output column
 madd      acc0.fp32, acc0.fp32, m2.bf16        # residual add, widening
 mmax      acc0.fp32, acc0.fp32, x0             # ReLU: x0 holds +0.0
+mmul      acc2.fp32, acc2.fp32, t0             # scale by 1/sqrt(d), from t0
 msmul.row acc1.int32, acc1.int32, m14x2.int32, rmm  # per-channel multiplier
 ----
 
