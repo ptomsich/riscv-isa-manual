@@ -51,8 +51,11 @@ A matrix multiply reads its operands from matrix registers and accumulates into 
 ==== Accumulator Registers
 
 [#norm:Ztt_accreg]#Each accumulator register holds _N_ {times} _N_ 32-bit elements.#
-[#norm:Ztt_R]#The number of accumulator registers, _R_, is fixed by this specification.#
-// OPEN (decision 6): R = 16 or 32; the evaluation also covers R = 4.
+[#norm:Ztt_R]#There are _R_ = 8 accumulator registers.#
+
+NOTE: Flash attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys, and needs one more for the scores and their row sums and another to compute the next block's scores while the current one completes.
+Eight accumulators hold an output of _d_ = 4__N__ in that way, and of _d_ = 6__N__ without the second score accumulator; a larger output is computed in slices of _d_, each of which recomputes the scores.
+Fewer accumulators would slice the common head dimensions of 64 and 128 at small _N_, while more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
 
 [[ztt-mstatus]]
 ==== Ztt Context Status in csr:mstatus[]
