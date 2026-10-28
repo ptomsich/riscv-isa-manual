@@ -877,6 +877,27 @@ The immediate form serves kernels specialized for one layer, and scaling by a co
 It saves a register and the instruction that loads it, and it reads no X register, so a decoupled matrix unit receives the operand with the instruction.
 ====
 
+[[ztt-ops-mexp2]]
+===== Exponentials
+
+[#norm:Ztt_mexp2]#insn:mexp2[] computes 2^__x__^ of each element _x_ of its source.
+The source and destination datatypes are equal, and are FP16, BF16, or FP32.#
+[#norm:Ztt_mexp2_acc]#A result is 2^__x__^ if that is representable, and otherwise one of the two representable values adjacent to it; which one is implementation-defined, and depends only on _x_ and the datatype.#
+[#norm:Ztt_mexp2_special]#2^+{inf}^ is +{inf}, 2^−{inf}^ is +0, and a NaN gives the canonical NaN.
+A result beyond the largest finite value is +{inf}, or the largest finite value as selected by `sat`.
+The floating-point exception flags accrue as for a rounded result: NV for a signaling NaN, OF and UF for overflow and underflow, and NX for an inexact result.
+An `rm` other than 0 is reserved.#
+
+NOTE: Faithful rounding admits a table and a short polynomial on the fraction of _x_.
+The natural exponential is e^__x__^ = 2^__y__^ with _y_ = _x_ log~2~ e, and softmax folds the factor log~2~ e into the scaling of the scores:
+
+[source,asm]
+----
+msub    m4.fp32, m4.fp32, m6.fp32         # x - max of its row
+mmul    m4.fp32, m4.fp32, t0              # t0 holds log2(e), scaled
+mexp2   m4.fp32, m4.fp32
+----
+
 [[ztt-ops-acc]]
 ===== Operations on Accumulators
 
