@@ -53,8 +53,8 @@ A matrix multiply reads its operands from matrix registers and accumulates into 
 [#norm:Ztt_accreg]#Each accumulator register holds _N_ {times} _N_ 32-bit elements.#
 [#norm:Ztt_R]#There are _R_ = 8 accumulator registers.#
 
-NOTE: Flash attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys, and needs one more for the scores and their row sums and another to compute the next block's scores while the current one completes.
-Eight accumulators hold an output of _d_ = 4__N__ in that way, and of _d_ = 6__N__ without the second score accumulator; a larger output is computed in slices of _d_, each of which recomputes the scores.
+NOTE: Flash attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys, and needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes (<<ztt-example-flash>>).
+Eight accumulators hold an output of _d_ = 5__N__ in that way, and of _d_ = 6__N__ without the second score accumulator; a larger output is computed in slices of _d_, each of which recomputes the scores.
 Fewer accumulators would slice the common head dimensions of 64 and 128 at small _N_, while more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
 
 [[ztt-mstatus]]
@@ -942,8 +942,10 @@ mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon
 |===
 
 [#norm:Ztt_acc_madd_m]#When the second operand of insn:madd[] is a matrix-register operand, it designates a tile as for insn:mcvt[], and its datatype is one that converts exactly to the accumulator datatype; the sum is rounded once.#
-[#norm:Ztt_bcast]#A broadcast operand is row 0 of a matrix-register operand that designates a tile as for insn:mcvt[], a vector _v_ of _N_ elements.
-In the row form, written with the suffix `.row`, element (_i_, _j_) of the result uses _v_~__j__~; in the column form, written `.col`, it uses _v_~__i__~.#
+[#norm:Ztt_bcast]#A broadcast operand is a vector _v_ of _N_ elements taken from a matrix-register operand that designates a tile as for insn:mcvt[].
+In the row form, written with the suffix `.row`, _v_ is row 0 of the tile, and element (_i_, _j_) of the result uses _v_~__j__~; in the column form, written `.col`, _v_ is column 0, and element (_i_, _j_) uses _v_~__i__~.#
+
+NOTE: A load with _LD_ = 0 and a column reduction (<<ztt-ops-reduce>>) write a vector to every row, where the row form reads it; a transposing load with _LD_ = 0 and a row reduction write it to every column, where the column form reads it.
 
 NOTE: Other operations on accumulators, such as GELU, convert to a matrix register with insn:mcvt[] and continue there.
 
@@ -1322,7 +1324,7 @@ The third pass computes the exponentials again instead of loading them stored by
 
 The following code computes O = softmax(__s__ Q K^T^) V for a block of _N_ query rows in BF16, with a head dimension _d_ = 4__N__, in one pass over _L_ keys and values.
 For each block of _N_ keys, it raises the row maxima _m_, rescales the row sums _l_ and the output by α = 2^__a__^ for _a_ = __m__~old~ − __m__~new~, and adds the new block's contributions; it divides by _l_ once at the end.
-The output stays in four accumulators, the scores use a fifth, the row sums a sixth, and the seventh brings α, which is replicated along each row, to the accumulators.
+The output stays in four accumulators, the scores use a fifth, and the row sums a sixth; α and 1/__l__, replicated along each row, scale them as column broadcasts.
 
 [source,asm]
 ----
@@ -1372,13 +1374,12 @@ The output stays in four accumulators, the scores use a fifth, the row sums a si
         mexp2       m12.fp32, m12.fp32              # P
         mexp2       m13.fp32, m13.fp32
         mmv         m16x2, m14x2
-        mcvt        acc6.fp32, m18x2.fp32
-        mmul        acc5.fp32, acc5.fp32, acc6.fp32
+        mmul.col    acc5.fp32, acc5.fp32, m18x2.fp32
         mmacc       acc5.fp32, m12x2.fp32, m20x2.fp32   # l = alpha l + row sums of P
-        mmul        acc0.fp32, acc0.fp32, acc6.fp32
-        mmul        acc1.fp32, acc1.fp32, acc6.fp32
-        mmul        acc2.fp32, acc2.fp32, acc6.fp32
-        mmul        acc3.fp32, acc3.fp32, acc6.fp32
+        mmul.col    acc0.fp32, acc0.fp32, m18x2.fp32
+        mmul.col    acc1.fp32, acc1.fp32, m18x2.fp32
+        mmul.col    acc2.fp32, acc2.fp32, m18x2.fp32
+        mmul.col    acc3.fp32, acc3.fp32, m18x2.fp32
         mcvt        m22.bf16, m12x2.fp32
         mmacc.n     acc0.fp32, m22.bf16, m8.bf16    # O = alpha O + P V
         mmacc.n     acc1.fp32, m22.bf16, m9.bf16
@@ -1389,11 +1390,10 @@ The output stays in four accumulators, the scores use a fifth, the row sums a si
         mcvt        m12x2.fp32, acc5.fp32
         mrec        m12.fp32, m12.fp32
         mrec        m13.fp32, m13.fp32
-        mcvt        acc6.fp32, m12x2.fp32           # 1/l
-        mmul        acc0.fp32, acc0.fp32, acc6.fp32
-        mmul        acc1.fp32, acc1.fp32, acc6.fp32
-        mmul        acc2.fp32, acc2.fp32, acc6.fp32
-        mmul        acc3.fp32, acc3.fp32, acc6.fp32
+        mmul.col    acc0.fp32, acc0.fp32, m12x2.fp32   # O / l
+        mmul.col    acc1.fp32, acc1.fp32, m12x2.fp32
+        mmul.col    acc2.fp32, acc2.fp32, m12x2.fp32
+        mmul.col    acc3.fp32, acc3.fp32, m12x2.fp32
         mcvt        acc0.bf16, acc0.fp32
         mcvt        acc1.bf16, acc1.fp32
         mcvt        acc2.bf16, acc2.fp32
@@ -1407,8 +1407,8 @@ The output stays in four accumulators, the scores use a fifth, the row sums a si
         msa.st.e16  acc3, (a6), s0      # O[i][3N]
 ----
 
-Each block of keys takes eight insn:mmacc[] for the products, two loads, and 23 other matrix instructions, using 23 matrix registers and seven accumulators.
-With the eighth accumulator, the scores of the next block are computed while the current block completes.
+Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, two loads, and 21 other matrix instructions, using 23 matrix registers and six accumulators.
+With a seventh accumulator, the scores of the next block are computed while the current block completes.
 
 [[ztt-insns]]
 === Instructions (in alphabetical order)
