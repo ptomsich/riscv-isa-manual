@@ -899,6 +899,48 @@ The code does not depend on _N_.
 
 NOTE: Blocks at the edges of C, and a _K_ that is not a multiple of _N_, use the partial-tile forms of the loads and stores, whose zero fill makes the extra columns contribute nothing.
 
+[[ztt-example-gemm-groups]]
+==== Example: Matrix Multiply with Register Groups
+
+Loading register groups reduces the number of loads and address updates per insn:mmacc[].
+The following code replaces the loop of <<ztt-example-gemm>>, for a _K_ that is a multiple of 4__N__.
+Each load fetches 4__N__ columns into a group of four registers, and each insn:mmacc[] names one register of a group.
+The loop ends when the first pointer into A reaches the end of its rows, so it needs no counter.
+
+[source,asm]
+----
+        slli        t2, t1, 2           # 4N BF16 elements are 8N bytes
+        slli        a6, a6, 1
+        add         a6, a0, a6          # &A[i][K]
+1:      mls.st.e16  m0x4, (a0), a1      # A rows i to i+N-1, next 4N columns
+        add         a0, a0, t2
+        mls.st.e16  m4x4, (t3), a1      # A rows i+N to i+2N-1
+        add         t3, t3, t2
+        mls.st.e16  m8x4, (a2), a3      # W rows j to j+N-1
+        add         a2, a2, t2
+        mls.st.e16  m12x4, (t4), a3     # W rows j+N to j+2N-1
+        add         t4, t4, t2
+        mmacc       acc0.fp32, m0.bf16, m8.bf16
+        mmacc       acc1.fp32, m0.bf16, m12.bf16
+        mmacc       acc2.fp32, m4.bf16, m8.bf16
+        mmacc       acc3.fp32, m4.bf16, m12.bf16
+        mmacc       acc0.fp32, m1.bf16, m9.bf16
+        mmacc       acc1.fp32, m1.bf16, m13.bf16
+        mmacc       acc2.fp32, m5.bf16, m9.bf16
+        mmacc       acc3.fp32, m5.bf16, m13.bf16
+        mmacc       acc0.fp32, m2.bf16, m10.bf16
+        mmacc       acc1.fp32, m2.bf16, m14.bf16
+        mmacc       acc2.fp32, m6.bf16, m10.bf16
+        mmacc       acc3.fp32, m6.bf16, m14.bf16
+        mmacc       acc0.fp32, m3.bf16, m11.bf16
+        mmacc       acc1.fp32, m3.bf16, m15.bf16
+        mmacc       acc2.fp32, m7.bf16, m11.bf16
+        mmacc       acc3.fp32, m7.bf16, m15.bf16
+        bne         a0, a6, 1b
+----
+
+Each iteration issues 16 insn:mmacc[] for four loads, four address updates and one branch, using 16 matrix registers.
+
 [[ztt-insns]]
 === Instructions (in alphabetical order)
 
