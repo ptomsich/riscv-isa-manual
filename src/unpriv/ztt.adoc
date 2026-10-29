@@ -41,6 +41,12 @@ NOTE: Thread contexts with live Ztt state cannot be migrated between harts with 
 [#norm:Ztt_state]#Ztt adds to each hart 32 matrix registers, `m0` to `m31`, _R_ accumulator registers, `acc0` to ``acc``__R__``−1``, and the read-only CSR csr:amenlenb[].#
 A matrix multiply reads its operands from matrix registers and accumulates into an accumulator register; the other operations read and write matrix registers.
 
+NOTE: The state is architecturally per hart, but a matrix unit may hold several contexts: one context for one hart, several contexts for one hart, such as for an interactive and a real-time task, or contexts for several harts.
+Harts that share a unit have the same _N_.
+A context is only register contents, as no configuration state exists (<<ztt-datatypes>>); only loads and stores raise exceptions other than illegal-instruction exceptions, which are decided at decode (<<ztt-exceptions>>); a unit may access memory through its own path (<<ztt-memory-model>>); and register images do not depend on internal storage (<<ztt-register-images>>).
+A context can thus move between units, and software sees the configuration only through performance.
+<<ext:ssttctx>> specifies how contexts are bound to harts.
+
 [[ztt-mregs]]
 ==== Matrix Registers
 
