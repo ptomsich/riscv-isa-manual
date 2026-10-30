@@ -943,7 +943,8 @@ In the row form, written with the suffix `.row`, _v_ is row 0 of the tile, and e
 
 NOTE: A load with _LD_ = 0 and a column reduction (<<ztt-ops-reduce>>) write a vector to every row, where the row form reads it; a transposing load with _LD_ = 0 and a row reduction write it to every column, where the column form reads it.
 
-NOTE: Other operations on accumulators, such as GELU, convert to a matrix register with insn:mcvt[] and continue there.
+NOTE: The operations of <<ztt-acc-ops-table>> let an accumulator be an operand without a spill to a matrix register; an implementation may execute one by converting the accumulator into an operand that no instruction names and operating on that operand.
+Other operations on accumulators, such as GELU, convert to a matrix register with insn:mcvt[] and continue there.
 
 [source,asm]
 ----
