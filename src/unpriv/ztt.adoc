@@ -611,7 +611,6 @@ The memory operations of a hart form two streams: the _Ztt stream_, made of the 
 
 [#norm:Ztt_mm_across]#A memory operation in one stream is ordered before a memory operation of the same hart in the other stream only if a FENCE instruction orders them, an acquire or release annotation orders them, or a syntactic dependency orders them, under the rules of RVWMO.
 Program order alone, even to overlapping addresses, does not order them, including when the ext:ztso[] extension is implemented.#
-[#norm:Ztt_mm_trap]#Taking a trap, and executing an xRET instruction, orders each memory operation in one stream that precedes it in program order before each memory operation in the other stream that follows it.#
 [#norm:Ztt_mm_fence]#FENCE and FENCE.TSO apply their predecessor and successor sets to Ztt memory operations as to any other memory operation of the hart; a Ztt memory operation is a device input or output operation, or a memory read or write, according to the PMAs of the location it accesses.#
 [#norm:Ztt_mm_sfence]#SFENCE.VMA orders the implicit accesses for address translation made by Ztt memory operations as it does those of other memory operations.#
 [#norm:Ztt_mm_shared]#The memory operations that a matrix unit shared by several harts performs for a Ztt instruction belong to the Ztt stream of the hart that executed it.#
@@ -627,7 +626,7 @@ Data passed between the streams within a hart needs a fence:
 * overlapping stores in the two streams that must take effect in program order: `fence w,w`.
 
 A release annotation, such as on `amoswap.w.rl`, also orders older Ztt memory operations, so a lock release needs no additional fence.
-Because traps and xRET order the streams, a handler that fills or copies a page for a faulting Ztt load or store needs no fence before the instruction is retried, and neither does a system call that passes a buffer to or from Ztt code.
+Taking a trap and executing an xRET instruction do not order the streams, so a handler that fills or copies a page for a faulting Ztt load or store executes a fence before the instruction is retried.
 ====
 
 [[ztt-arith]]
