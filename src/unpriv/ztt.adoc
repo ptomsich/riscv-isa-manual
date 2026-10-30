@@ -59,9 +59,9 @@ A context can thus move between units, and software sees the configuration only 
 [#norm:Ztt_accreg]#Each accumulator register holds _N_ {times} _N_ 32-bit elements.#
 [#norm:Ztt_R]#There are _R_ = 8 accumulator registers.#
 
-NOTE: Flash attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys.
-In one pass (<<ztt-example-flash>>), it needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes, so eight accumulators hold an output of _d_ = 5__N__, or of _d_ = 6__N__ without the overlap.
-In two passes (<<ztt-example-flash-2p>>), the pass that computes the output holds nothing else, so eight accumulators hold an output of _d_ = 8__N__, a head dimension of 128 at _N_ = 16.
+NOTE: Attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys.
+Flash attention (<<ztt-example-flash>>) needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes, so eight accumulators hold an output of _d_ = 5__N__, or of _d_ = 6__N__ without the overlap.
+An attention that stores its scores in memory (<<ztt-example-attn-2p>>) holds nothing else in the pass that computes the output, so eight accumulators hold an output of _d_ = 8__N__, a head dimension of 128 at _N_ = 16.
 Fewer accumulators would slice the common head dimensions of 64 and 128 at small _N_, while more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
 
 [[ztt-mstatus]]
@@ -1321,7 +1321,7 @@ The third pass computes the exponentials again instead of loading them stored by
 [[ztt-example-flash]]
 ==== Example: Flash Attention
 
-The following code computes O = softmax(__s__ Q K^T^) V for a block of _N_ query rows in BF16, with a head dimension _d_ = 4__N__, in one pass over _L_ keys and values.
+The following code computes O = softmax(__s__ Q K^T^) V for a block of _N_ query rows in BF16, with a head dimension _d_ = 4__N__, in one pass over _L_ keys and values, as the forward pass of FlashAttention-2.
 For each block of _N_ keys, it raises the row maxima _m_, rescales the row sums _l_ and the output by α = 2^__a__^ for _a_ = __m__~old~ − __m__~new~, and adds the new block's contributions; it divides by _l_ once at the end.
 The output stays in four accumulators, the scores use a fifth, and the row sums a sixth; α and 1/__l__, replicated along each row, scale them as column broadcasts.
 
@@ -1414,12 +1414,13 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
 
 Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, five loads, and 21 other matrix instructions, using 23 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
+For training, the forward pass also stores _m_ and _l_ of each row, from which the backward pass recomputes P.
 
-[[ztt-example-flash-2p]]
-==== Example: Flash Attention in Two Passes
+[[ztt-example-attn-2p]]
+==== Example: Attention in Two Passes
 
-The single-pass form of <<ztt-example-flash>> rescales its output and row sums in every block of keys.
-The following code moves that work out of its loops, at the cost of storing and loading two scratch tiles per block, and computes the same O for a head dimension _d_ = 8__N__:
+Flash attention (<<ztt-example-flash>>) rescales its output and row sums in every block of keys, so that its scores never reach memory.
+The following code instead stores the scores of a block of queries and finds their maxima first, so that nothing is rescaled, at the cost of storing and loading two scratch tiles per block, and computes the same O for a head dimension _d_ = 8__N__:
 
 * Pass 1 computes S^T^ = K Q^T^, one key per row and one query per column, keeps a running maximum elementwise, and stores S^T^ in BF16.
 One insn:mredmax.col[] then gives the maximum _m_ of each query down its column.
