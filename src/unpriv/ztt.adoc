@@ -583,7 +583,8 @@ It transfers only the elements whose row index is below the row count and whose 
 [#norm:Ztt_ls_partial_load]#A partial-tile load writes zero to the elements it does not transfer.#
 [#norm:Ztt_ls_partial_store]#A partial-tile store does not access memory for the elements it does not transfer.#
 
-NOTE: Zero-filled columns contribute nothing to a matrix multiply, so a partial-tile load pads an edge tile, or a short inner dimension, without a separate clearing step.
+NOTE: A partial-tile load pads an edge tile, or a short inner dimension, without a separate clearing step: if both sources of a matrix multiply are loaded with the same column count, the zero-filled columns contribute only +0 products.
+The counts also tell an implementation which elements are zero; the product of a zero element needs no significand multiply, only its sign and the handling of an infinite or NaN partner (<<ztt-matmul-numerics>>).
 
 [[ztt-memory-whole]]
 ==== Whole-Register Forms
