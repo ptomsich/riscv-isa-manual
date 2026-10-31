@@ -1016,15 +1016,17 @@ Rotates serve hashing, checksums, and the permutation of packed fields.
 [[ztt-ops-reduce]]
 ==== Reductions
 
-[#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of an _N_ {times} _N_ source to its largest or smallest element, and write the result to every element of that row or column of the destination.
-In the row form, written `.row`, element (_i_, _j_) of the destination is the reduction of row _i_ of the source; in the column form, written `.col`, of column _j_.#
-[#norm:Ztt_red_operands]#The source and destination are both accumulator registers, or both matrix-register operands that designate a tile as for insn:mcvt[], and have one datatype.
+[#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of an _N_ {times} _N_ source to its largest or smallest element, and write to every element of that row or column of the destination the larger or smaller of that element and the result.
+In the row form, written `.row`, element (_i_, _j_) of the destination combines with the reduction of row _i_ of the source; in the column form, written `.col`, of column _j_.#
+[#norm:Ztt_red_operands]#The source is an accumulator register or a matrix-register operand that designates a tile as for insn:mcvt[].
+The destination is a matrix-register operand that designates a tile, or an accumulator register if the source is one, and both have one datatype.
 The source is read in full before the destination is written.#
 [#norm:Ztt_red_fp]#For floating-point datatypes, the reductions are the maximumNumber and minimumNumber operations of IEEE 754-2019, as for insn:mmax[] and insn:mmin[], and raise NV for a signaling NaN.
 An `rm` other than 0 and `sat` are reserved for them.#
 [#norm:Ztt_red_types]#The reductions support the datatypes of insn:mmax[] and insn:mmin[] (<<ztt-ops-arith>>).#
 
 NOTE: The result is replicated along the reduced dimension, so it is an operand of elementwise operations, which take no broadcasts, and every instruction writes its whole destination.
+The destination accumulates, so a running maximum over tiles needs no insn:mmax[], and an accumulator is reduced without a conversion to a matrix register; with the source as the destination, the result is the reduction alone.
 
 Sums are matrix multiplies by a matrix of ones, held in a matrix register loaded once.
 insn:mmacc[] with ones as B adds the sum of row _i_ of A, over _K_ columns, to every element of row _i_ of C.
@@ -1037,7 +1039,7 @@ mmacc       acc1.int32, m0x2.int8, m8x2.int8   # m8x2 holds ones: row sums of A
 mmacc       acc2.int32, m8x2.int8, m4x2.int8   # m4x2 holds B^T: column sums of B
 mcvt        m10x2.fp32, acc0.fp32              # an accumulator is summed from a matrix register
 mmacc       acc3.fp32, m10x2.fp32, m12x2.fp32  # m12x2 holds ones
-mredmax.row acc4.fp32, acc0.fp32               # row maxima of attention scores
+mredmax.row m14x2.fp32, acc0.fp32              # running row maxima of attention scores
 ----
 
 NOTE: The row and column sums of the sources are the zero-point corrections of a quantized matrix multiply.
@@ -1399,19 +1401,17 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         mmacc       acc4.fp32, m2.bf16, m6.bf16
         mmacc       acc4.fp32, m3.bf16, m7.bf16
         mmul        acc4.fp32, acc4.fp32, s1
+        mmv         m18x2, m16x2                    # old row maxima
+        mredmax.row m16x2.fp32, acc4.fp32           # new row maxima
         mcvt        m12x2.fp32, acc4.fp32
-        mredmax.row m14x2.fp32, m12x2.fp32
-        mmax        m14.fp32, m14.fp32, m16.fp32    # new row maxima
-        mmax        m15.fp32, m15.fp32, m17.fp32
-        msub        m18.fp32, m16.fp32, m14.fp32
-        msub        m19.fp32, m17.fp32, m15.fp32
+        msub        m18.fp32, m18.fp32, m16.fp32
+        msub        m19.fp32, m19.fp32, m17.fp32
         mexp2       m18.fp32, m18.fp32              # alpha, 0 for the first block
         mexp2       m19.fp32, m19.fp32
-        msub        m12.fp32, m12.fp32, m14.fp32
-        msub        m13.fp32, m13.fp32, m15.fp32
+        msub        m12.fp32, m12.fp32, m16.fp32
+        msub        m13.fp32, m13.fp32, m17.fp32
         mexp2       m12.fp32, m12.fp32              # P
         mexp2       m13.fp32, m13.fp32
-        mmv         m16x2, m14x2
         mmul.col    acc5.fp32, acc5.fp32, m18x2.fp32
         mmacc       acc5.fp32, m12x2.fp32, m20x2.fp32   # l = alpha l + row sums of P
         mmul.col    acc0.fp32, acc0.fp32, m18x2.fp32
@@ -1445,7 +1445,7 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         msa.st.e16  acc3, (a6), s0      # O[i][3N]
 ----
 
-Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, five loads, and 21 other matrix instructions, using 23 matrix registers and six accumulators.
+Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, five loads, and 19 other matrix instructions, using 21 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
 For training, the forward pass also stores _m_ and 1/__l__ of each row from m16x2 and m12x2, with insn:mss.tst[] and _LD_ = 0, from which the backward pass (<<ztt-example-flash-bwd>>) recomputes P.
 
@@ -1455,8 +1455,7 @@ For training, the forward pass also stores _m_ and 1/__l__ of each row from m16x
 Flash attention (<<ztt-example-flash>>) rescales its output and row sums in every block of keys, so that its scores never reach memory.
 The following code instead stores the scores of a block of queries and finds their maxima first, so that nothing is rescaled, at the cost of storing and loading two scratch tiles per block, and computes the same O for a head dimension _d_ = 8__N__:
 
-* Pass 1 computes S^T^ = K Q^T^, one key per row and one query per column, keeps a running maximum elementwise, and stores S^T^ in BF16.
-One insn:mredmax.col[] then gives the maximum _m_ of each query down its column.
+* Pass 1 computes S^T^ = K Q^T^, one key per row and one query per column, stores S^T^ in BF16, and reduces each block into the maximum _m_ of each query down its column.
 * Pass 2a computes P̃^T^, the exponentials 2^__x__^ of the elements _x_ of S^T^ − _m_, sums them elementwise, and stores them with a transposing store, so that each scratch tile holds P̃ with one query per row.
 A matrix multiply with an identity matrix (<<ztt-ops-const>>) transposes the sums, so that their row sums _l_ give 1/__l__ in column 0, where the column form of a broadcast reads it.
 * Pass 2b computes O = P̃ V in eight accumulators without rescaling, and scales by 1/__l__ once.
@@ -1510,14 +1509,11 @@ The scratch buffers hold _L_ {times} _N_ BF16 elements each, as consecutive _N_ 
         mmacc       acc0.fp32, m13.bf16, m5.bf16
         mmacc       acc0.fp32, m14.bf16, m6.bf16
         mmacc       acc0.fp32, m15.bf16, m7.bf16
-        mcvt        m16x2.fp32, acc0.fp32
-        mmax        m18.fp32, m18.fp32, m16.fp32
-        mmax        m19.fp32, m19.fp32, m17.fp32
-        mcvt        m20.bf16, m16x2.fp32
+        mredmax.col m18x2.fp32, acc0.fp32           # m[k][q] = maximum of query q
+        mcvt        m20.bf16, acc0.fp32
         mss.st.e16  m20, (s4), t0       # S^T tile
         add         s4, s4, t4
         bne         a2, t5, 1b
-        mredmax.col m18x2.fp32, m18x2.fp32          # m[k][q] = maximum of query q
         sub         t5, s4, s2
         add         t5, s3, t5          # end of the scratch for P
 
@@ -1626,8 +1622,9 @@ The scratch buffers hold _L_ {times} _N_ BF16 elements each, as consecutive _N_ 
         msa.st.e16  acc7, (a6), s0      # O[i][7N]
 ----
 
-Per block of keys, the passes take the eight insn:mmacc[] of pass 1 and the eight of pass 2b, and 13 other matrix instructions besides loads and stores, none of which operates elementwise on an accumulator.
+Per block of keys, the passes take the eight insn:mmacc[] of pass 1 and the eight of pass 2b, and 11 other matrix instructions besides loads and stores, none of which operates elementwise on an accumulator.
 Pass 2b holds only the output in accumulators, so eight cover _d_ = 8__N__ with the values read once.
+This suits implementations with eight resident accumulators; one with fewer computes the output in groups of columns, loading the P tiles once per group.
 
 NOTE: Scratch tiles in BF16 round the scores before the exponential, which the single-pass form does not; FP32 tiles avoid this at twice their traffic.
 Scaling Q in BF16 rounds the scaled queries.
