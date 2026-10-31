@@ -62,6 +62,7 @@ A context can thus move between units, and software sees the configuration only 
 NOTE: Attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys.
 Flash attention (<<ztt-example-flash>>) needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes, so eight accumulators hold an output of _d_ = 5__N__, or of _d_ = 6__N__ without the overlap.
 An attention that stores its scores in memory (<<ztt-example-attn-2p>>) holds nothing else in the pass that computes the output, so eight accumulators hold an output of _d_ = 8__N__, a head dimension of 128 at _N_ = 16.
+The backward pass (<<ztt-example-flash-bwd>>) holds two outputs, dK and dV, with S^T^ and dP^T^ in one pass, so eight accumulators hold _d_ = 3__N__; a larger head dimension recomputes the scores in further passes, and an implementation with a larger _N_ recomputes less.
 Fewer accumulators would slice the common head dimensions of 64 and 128 at small _N_, while more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
 
 [[ztt-mstatus]]
@@ -1414,7 +1415,7 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
 
 Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, five loads, and 21 other matrix instructions, using 23 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
-For training, the forward pass also stores _m_ and _l_ of each row, from which the backward pass recomputes P.
+For training, the forward pass also stores _m_ and 1/__l__ of each row from m16x2 and m12x2, with insn:mss.tst[] and _LD_ = 0, from which the backward pass (<<ztt-example-flash-bwd>>) recomputes P.
 
 [[ztt-example-attn-2p]]
 ==== Example: Attention in Two Passes
@@ -1598,6 +1599,175 @@ Pass 2b holds only the output in accumulators, so eight cover _d_ = 8__N__ with 
 
 NOTE: Scratch tiles in BF16 round the scores before the exponential, which the single-pass form does not; FP32 tiles avoid this at twice their traffic.
 Scaling Q in BF16 rounds the scaled queries.
+
+[[ztt-example-flash-bwd]]
+==== Example: Flash Attention Backward Pass
+
+The following code computes the gradients dQ, dK, and dV of the attention in <<ztt-example-flash>> for a head dimension _d_ = 2__N__, from Q, K, V, O, the output gradient dO, and the _m_ and 1/__l__ of each query that the forward pass stores.
+With P recomputed as 2^__x__^ {times} 1/__l__ for the elements _x_ of __s__ log~2~ e Q K^T^ − _m_, and D the row sums of dO ∘ O, the gradients are dS = P ∘ (dO V^T^ − D), dQ = __s__ dS K, dK = __s__ dS^T^ Q, and dV = P^T^ dO.
+Each output stays in accumulators across one loop:
+
+* Pass 1 computes D and dQ for a block of _N_ queries over all blocks of keys.
+* Pass 2 computes dK and dV for a block of _N_ keys over all blocks of queries, from S^T^ = K Q^T^, so that P^T^ and dS^T^ are the first sources of their matrix multiplies.
+
+Transposing loads supply K^T^, Q^T^, and dO^T^, so no register is transposed, and each block of an output is written once.
+The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in pass 1 and down each column in pass 2; a store with _LD_ = 0 writes such a vector, every element of a row writing the same value to the same address.
+
+[source,asm]
+----
+# Pass 1, for a block of N queries:
+# a0: &Q[i][0]   a1: ldq   a2: &K[0][0]   a3: ldk   a4: &V[0][0]   a5: ldv
+# a6: &O[i][0]   a7: ldo   s0: &dO[i][0]  s1: lddo  s2: &dQ[i][0]  s3: lddq
+# s4: &m[i]   s5: &(1/l)[i]   s6: &D[i]   s7: L, a multiple of N
+# s8: s log2(e) in FP32   s9: s in FP32   (leading dimensions in elements)
+
+        csrr        t1, amenlenb        # 2N
+        mul         t2, t1, a3          # N rows of K
+        mul         t3, t1, a5          # N rows of V
+        mul         t5, s7, a3
+        slli        t5, t5, 1
+        add         t5, a2, t5          # &K[L][0]
+        mls.st.e16  m0x2, (a0), a1      # Q: N rows, 2N columns
+        mls.st.e16  m2x2, (s0), s1      # dO
+        mls.st.e16  m4x2, (a6), a7      # O
+        mls.tst.e32 m6x2, (s4)          # m, replicated along each row
+        mls.tst.e32 m8x2, (s5)          # 1/l, replicated along each row
+        mcvt        m10x2.fp32, m2.bf16
+        mcvt        m12x2.fp32, m4.bf16
+        mmul        m10.fp32, m10.fp32, m12.fp32
+        mmul        m11.fp32, m11.fp32, m13.fp32
+        mcvt        m12x2.fp32, m3.bf16
+        mcvt        m14x2.fp32, m5.bf16
+        mmul        m12.fp32, m12.fp32, m14.fp32
+        mmul        m13.fp32, m13.fp32, m15.fp32    # dO o O
+        li          t4, 0x3f800000      # 1.0
+        mfill.e32   m14, t4
+        mfill.e32   m15, t4             # m14x2: ones
+        mzero       acc0
+        mmacc       acc0.fp32, m10x2.fp32, m14x2.fp32
+        mmacc       acc0.fp32, m12x2.fp32, m14x2.fp32
+        mcvt        m10x2.fp32, acc0.fp32           # D, replicated along each row
+        mss.tst.e32 m10x2, (s6), x0     # D[i], for pass 2
+        mzero       acc2
+        mzero       acc3                # acc2, acc3: dQ
+
+1:      mls.st.e16  m12x2, (a2), a3     # K: N keys
+        mls.tst.e16 m14, (a2), a3       # K^T, columns 0 to N-1 of K
+        add         t6, a2, t1
+        mls.tst.e16 m15, (t6), a3       # K^T, columns N to 2N-1 of K
+        add         a2, a2, t2
+        mls.st.e16  m16x2, (a4), a5     # V: N keys
+        add         a4, a4, t3
+        mzero       acc0
+        mmacc       acc0.fp32, m0x2.bf16, m12x2.bf16    # S = Q K^T
+        mmul        acc0.fp32, acc0.fp32, s8
+        mzero       acc1
+        mmacc       acc1.fp32, m2x2.bf16, m16x2.bf16    # dP = dO V^T
+        mcvt        m18x2.fp32, acc0.fp32
+        msub        m18.fp32, m18.fp32, m6.fp32
+        msub        m19.fp32, m19.fp32, m7.fp32
+        mexp2       m18.fp32, m18.fp32
+        mexp2       m19.fp32, m19.fp32
+        mmul        m18.fp32, m18.fp32, m8.fp32
+        mmul        m19.fp32, m19.fp32, m9.fp32         # P
+        mcvt        m20x2.fp32, acc1.fp32
+        msub        m20.fp32, m20.fp32, m10.fp32
+        msub        m21.fp32, m21.fp32, m11.fp32
+        mmul        m20.fp32, m20.fp32, m18.fp32
+        mmul        m21.fp32, m21.fp32, m19.fp32        # dS = P o (dP - D)
+        mcvt        m22.bf16, m20x2.fp32
+        mmacc       acc2.fp32, m22.bf16, m14.bf16       # dQ += dS K
+        mmacc       acc3.fp32, m22.bf16, m15.bf16
+        bne         a2, t5, 1b
+
+        mmul        acc2.fp32, acc2.fp32, s9
+        mmul        acc3.fp32, acc3.fp32, s9
+        mcvt        acc2.bf16, acc2.fp32
+        mcvt        acc3.bf16, acc3.fp32
+        msa.st.e16  acc2, (s2), s3      # dQ[i][0]
+        add         s2, s2, t1
+        msa.st.e16  acc3, (s2), s3      # dQ[i][N]
+
+# Pass 2, for a block of N keys:
+# a0: &K[j][0]   a1: ldk   a2: &V[j][0]   a3: ldv   a4: &Q[0][0]   a5: ldq
+# a6: &dO[0][0]  a7: lddo  s0: &m[0]   s1: &(1/l)[0]   s2: &D[0]   s3: L
+# s4: s log2(e) in FP32   s5: s in FP32
+# s6: &dK[j][0]  s7: lddk  s8: &dV[j][0]  s9: lddv
+
+        csrr        t1, amenlenb        # 2N
+        mul         t2, t1, a5          # N rows of Q
+        mul         t3, t1, a7          # N rows of dO
+        slli        t4, t1, 1           # N FP32 elements are 4N bytes
+        mul         t5, s3, a5
+        slli        t5, t5, 1
+        add         t5, a4, t5          # &Q[L][0]
+        mls.st.e16  m0x2, (a0), a1      # K: N keys, 2N columns
+        mls.st.e16  m2x2, (a2), a3      # V
+        mzero       acc0
+        mzero       acc1                # acc0, acc1: dV
+        mzero       acc2
+        mzero       acc3                # acc2, acc3: dK
+
+1:      mls.st.e16  m4x2, (a4), a5      # Q: N queries
+        mls.tst.e16 m6, (a4), a5        # Q^T, columns 0 to N-1 of Q
+        add         t6, a4, t1
+        mls.tst.e16 m7, (t6), a5        # Q^T, columns N to 2N-1 of Q
+        add         a4, a4, t2
+        mls.st.e16  m8x2, (a6), a7      # dO
+        mls.tst.e16 m10, (a6), a7       # dO^T
+        add         t6, a6, t1
+        mls.tst.e16 m11, (t6), a7
+        add         a6, a6, t3
+        mls.st.e32  m12x2, (s0)         # m, replicated down each column
+        mls.st.e32  m14x2, (s1)         # 1/l
+        mls.st.e32  m16x2, (s2)         # D
+        add         s0, s0, t4
+        add         s1, s1, t4
+        add         s2, s2, t4
+        mzero       acc4
+        mmacc       acc4.fp32, m0x2.bf16, m4x2.bf16     # S^T = K Q^T
+        mmul        acc4.fp32, acc4.fp32, s4
+        mzero       acc5
+        mmacc       acc5.fp32, m2x2.bf16, m8x2.bf16     # dP^T = V dO^T
+        mcvt        m18x2.fp32, acc4.fp32
+        msub        m18.fp32, m18.fp32, m12.fp32
+        msub        m19.fp32, m19.fp32, m13.fp32
+        mexp2       m18.fp32, m18.fp32
+        mexp2       m19.fp32, m19.fp32
+        mmul        m18.fp32, m18.fp32, m14.fp32
+        mmul        m19.fp32, m19.fp32, m15.fp32        # P^T
+        mcvt        m20.bf16, m18x2.fp32
+        mmacc       acc0.fp32, m20.bf16, m10.bf16       # dV += P^T dO
+        mmacc       acc1.fp32, m20.bf16, m11.bf16
+        mcvt        m22x2.fp32, acc5.fp32
+        msub        m22.fp32, m22.fp32, m16.fp32
+        msub        m23.fp32, m23.fp32, m17.fp32
+        mmul        m22.fp32, m22.fp32, m18.fp32
+        mmul        m23.fp32, m23.fp32, m19.fp32        # dS^T
+        mcvt        m24.bf16, m22x2.fp32
+        mmacc       acc2.fp32, m24.bf16, m6.bf16        # dK += dS^T Q
+        mmacc       acc3.fp32, m24.bf16, m7.bf16
+        bne         a4, t5, 1b
+
+        mmul        acc2.fp32, acc2.fp32, s5
+        mmul        acc3.fp32, acc3.fp32, s5
+        mcvt        acc0.bf16, acc0.fp32
+        mcvt        acc1.bf16, acc1.fp32
+        mcvt        acc2.bf16, acc2.fp32
+        mcvt        acc3.bf16, acc3.fp32
+        msa.st.e16  acc0, (s8), s9      # dV[j][0]
+        add         s8, s8, t1
+        msa.st.e16  acc1, (s8), s9      # dV[j][N]
+        msa.st.e16  acc2, (s6), s7      # dK[j][0]
+        add         s6, s6, t1
+        msa.st.e16  acc3, (s6), s7      # dK[j][N]
+----
+
+Per block, pass 1 takes four insn:mmacc[], four loads, and 16 other matrix instructions, using 23 matrix registers and four accumulators; pass 2 takes six insn:mmacc[], nine loads, and 17 other matrix instructions, using 25 matrix registers and six accumulators.
+Both passes compute S and dP, so each pair of blocks takes seven matrix multiplies of _N_^2^__d__ multiply-adds where five suffice.
+
+NOTE: Pass 2 holds dK, dV, S^T^, and dP^T^, 2__d__/__N__ + 2 accumulators, so eight cover _d_ = 3__N__; a larger head dimension computes dK and dV in separate passes, each recomputing S^T^.
+A single pass over blocks of keys computes S and dP once, but loads, adds to, and stores dQ in every block, and stores dS^T^ to load it as dS for dQ = __s__ dS K.
 
 [[ztt-insns]]
 === Instructions (in alphabetical order)
