@@ -1054,7 +1054,7 @@ Other reductions are composed from these instructions:
 |Weighted sum |insn:mmacc[] with the weights in place of ones
 |Prefix sum |insn:mmacc[] with a triangular matrix of ones
 |Sum of squares, mean |insn:mmul[], then a sum; a sum, then insn:mmul[] by 1/__K__
-|Largest magnitude |insn:mabs[], then insn:mredmax[]
+|Largest magnitude |insn:mabs[], with `sat` for a signed integer datatype, then insn:mredmax[]
 |Any, all |insn:mredmax[] and insn:mredmin[] of a mask
 |Count |A mask ANDed with ones, then a sum
 |Index of the maximum |insn:mredmax[], insn:mcmpeq[], insn:mbsel[] of an index matrix, and insn:mredmin[]
