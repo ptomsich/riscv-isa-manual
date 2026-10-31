@@ -846,8 +846,33 @@ An `rm` other than 0 and `sat` are reserved for them.#
 
 NOTE: insn:msmul[] is the fractional multiply of the vector extension's insn:vsmul.vv[], and the scaling step of integer requantization.
 
-[#norm:Ztt_ew_types]#The arithmetic operations support every integer datatype and every floating-point datatype except E8M0 and TF32; insn:msmul[] supports only signed integer datatypes.
+[#norm:Ztt_ew_mneg]#insn:mneg[] and insn:mabs[] compute −__a__ and {vbar}__a__{vbar} of each element _a_ of their source.
+For a floating-point datatype, they invert and clear the sign bit, as insn:fsgnjn.s[] and insn:fsgnjx.s[] do, raise no exception, and `sat` is reserved for them.
+For a signed integer datatype, the result for the most negative value wraps or saturates as selected by `sat`.
+An `rm` other than 0 is reserved for them.#
+
+[#norm:Ztt_ew_types]#The arithmetic operations support every integer datatype and every floating-point datatype except E8M0 and TF32; insn:msmul[] supports only signed integer datatypes, and insn:mneg[] and insn:mabs[] no unsigned integer datatype.
 The source and destination datatypes are equal.#
+
+[[ztt-ops-mfma]]
+===== Fused Multiply-Add
+
+[#norm:Ztt_mfma]#insn:mfma[] computes _d_ {times} _a_ + _b_ for corresponding elements _d_ of the destination, _a_ of the first source, and _b_ of the second source or a scalar operand, and writes it to the destination.
+The result is rounded once, as selected by `rm`, and saturated as selected by `sat`, as for insn:fmadd.s[].#
+[#norm:Ztt_mfma_types]#insn:mfma[] supports the floating-point datatypes of insn:madd[], and the source and destination datatypes are equal.#
+
+NOTE: Horner's rule evaluates a polynomial with one insn:mfma[] per coefficient, from an X register, rounding once per step where insn:mmul[] and insn:madd[] take two instructions and round twice.
+Polynomials approximate functions that insn:mexp2[], insn:mrec[], and insn:mrsqrt[] do not compose, such as erf in the exact form of GELU:
+
+[source,asm]
+----
+mmul    m6.fp32, m4.fp32, m4.fp32         # x^2, for x on a bounded range
+mfill.e32 m8, a3                          # c3
+mfma    m8.fp32, m6.fp32, a2              # c3 x^2 + c2
+mfma    m8.fp32, m6.fp32, a1
+mfma    m8.fp32, m6.fp32, a0              # p(x^2)
+mmul    m8.fp32, m8.fp32, m4.fp32         # erf(x), approximated by x p(x^2)
+----
 
 [[ztt-ops-mldexp]]
 ===== Power-of-Two Scaling
@@ -1027,7 +1052,7 @@ Other reductions are composed from these instructions:
 |Weighted sum |insn:mmacc[] with the weights in place of ones
 |Prefix sum |insn:mmacc[] with a triangular matrix of ones
 |Sum of squares, mean |insn:mmul[], then a sum; a sum, then insn:mmul[] by 1/__K__
-|Largest magnitude |insn:mredmax[] and insn:mredmin[], a negation, and insn:mmax[]
+|Largest magnitude |insn:mabs[], then insn:mredmax[]
 |Any, all |insn:mredmax[] and insn:mredmin[] of a mask
 |Count |A mask ANDed with ones, then a sum
 |Index of the maximum |insn:mredmax[], insn:mcmpeq[], insn:mbsel[] of an index matrix, and insn:mredmin[]
