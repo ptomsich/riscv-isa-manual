@@ -756,8 +756,9 @@ insn:mmacc[] reads both sources along _K_, by rows, as the matrix multiply of ex
 * A transposing load of B and insn:mmacc[] give the result of a form that multiplies by B, because the numerics depend only on _k_ (<<ztt-matmul-numerics>>).
 * Kernels, packing routines, and compilers carry over between ext:zvvmm[] and Ztt.
 
-insn:mmaccn[] is needed only by the split forms of the attention backward pass (<<ztt-example-flash-bwd>>), in which K, Q, and dO are each the B of one product and the B^T^ of another, so that without it each is loaded twice.
-It reads B by columns, which an implementation that reads both sources by rows executes at a fraction of the rate or with an added transpose unit, so it is added for those forms only: for their datatypes, at _K_ = _N_, and with no form that transposes A.
+insn:mmaccn[] is needed only by the attention backward pass (<<ztt-example-flash-bwd>>).
+In its split forms, K, Q, and dO are each the B of one product and the B^T^ of another, so that without it each is loaded twice; a single pass computes dQ^T^ = K^T^ dS^T^ from the dS^T^ it holds, where without it dS^T^ is stored and reloaded as dS.
+It reads B by columns, which an implementation that reads both sources by rows executes at a fraction of the rate or with an added transpose unit, so it is added for that kernel only: for its datatypes, at _K_ = _N_, and with no form that transposes A.
 Sources narrower than 16 bits do not fit the register model: the _W_ products of a sub-dot-product (<<ztt-matmul-numerics>>) would take their elements of B from _W_ rows instead of one 16-bit container, and a B of _K_ > _N_ rows would not be a register operand.
 Other sources of 16 bits or more would fit, but no kernel needs them in registers in both orientations; for operands from memory, a transposing load and insn:mmacc[] serve every datatype.
 ====
@@ -1764,7 +1765,7 @@ Per block, pass 1 takes four matrix multiplies, two loads, and 16 other matrix i
 Both passes compute S and dP, so each pair of blocks takes seven matrix multiplies of _N_^2^__d__ multiply-adds where five suffice.
 
 NOTE: Pass 2 holds dK, dV, S^T^, and dP^T^, 2__d__/__N__ + 2 accumulators, so eight cover _d_ = 3__N__; a larger head dimension computes dK and dV in separate passes, each recomputing S^T^.
-A single pass over blocks of keys computes S and dP once, but loads, adds to, and stores dQ in every block, and stores dS^T^ to load it as dS for dQ = __s__ dS K.
+A single pass over blocks of keys computes S and dP once, but loads, adds to, and stores dQ in every block: insn:mmaccn[] computes dQ^T^ = __s__ K^T^ dS^T^ from K^T^, loaded once per block of keys, and the transposing accumulator loads and stores transfer dQ^T^.
 
 [[ztt-insns]]
 === Instructions (in alphabetical order)
