@@ -1016,8 +1016,8 @@ Rotates serve hashing, checksums, and the permutation of packed fields.
 [[ztt-ops-reduce]]
 ==== Reductions
 
-[#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of an _N_ {times} _N_ source to its largest or smallest element, and write to every element of that row or column of the destination the larger or smaller of that element and the result.
-In the row form, written `.row`, element (_i_, _j_) of the destination combines with the reduction of row _i_ of the source; in the column form, written `.col`, of column _j_.#
+[#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of an _N_ {times} _N_ source to its largest or smallest element, combine it with one element of the destination, and write the result to every element of that row or column of the destination.
+In the row form, written `.row`, element (_i_, _j_) of the destination becomes the larger or smaller of element (_i_, 0) and the reduction of row _i_ of the source; in the column form, written `.col`, of element (0, _j_) and the reduction of column _j_.#
 [#norm:Ztt_red_operands]#The source is an accumulator register or a matrix-register operand that designates a tile as for insn:mcvt[].
 The destination is a matrix-register operand that designates a tile, or an accumulator register if the source is one, and both have one datatype.
 The source is read in full before the destination is written.#
@@ -1027,6 +1027,8 @@ An `rm` other than 0 and `sat` are reserved for them.#
 
 NOTE: The result is replicated along the reduced dimension, so it is an operand of elementwise operations, which take no broadcasts, and every instruction writes its whole destination.
 The destination accumulates, so a running maximum over tiles needs no insn:mmax[], and an accumulator is reduced without a conversion to a matrix register; with the source as the destination, the result is the reduction alone.
+Only column 0 or row 0 of the destination is read, the vector that a running maximum repeats.
+Otherwise, the reduction alone, as in the compositions below, needs a destination filled first with −{inf} for insn:mredmax[] and +{inf} for insn:mredmin[], or with the smallest and the largest value of an integer datatype.
 
 Sums are matrix multiplies by a matrix of ones, held in a matrix register loaded once.
 insn:mmacc[] with ones as B adds the sum of row _i_ of A, over _K_ columns, to every element of row _i_ of C.
