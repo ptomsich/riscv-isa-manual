@@ -747,13 +747,19 @@ Transposing loads supply A^T^ and B^T^ (<<ztt-memory-addressing>>).
 [#norm:Ztt_mmacc_shape]#A and B are the _N_ {times} _K_ matrices held by their operands (<<ztt-groups>>).#
 [#norm:Ztt_mmacc_k]#The two source operands have the same number of columns, _K_ (<<ztt-enc-columns>>).#
 
+[#norm:Ztt_mmaccn]#insn:mmaccn[] computes C {leftarrow} C + A {times} B, where A and B are the _N_ {times} _N_ matrices held by their operands, of the 16-bit and 32-bit floating-point datatypes of <<ztt-mmacc-table>>.#
+
 [NOTE]
 ====
-Ztt has a single matrix-multiply form, as ext:zvvmm[] has, which reads both sources along _K_, by rows:
+insn:mmacc[] reads both sources along _K_, by rows, as the matrix multiply of ext:zvvmm[] does:
 
 * A transposing load of B and insn:mmacc[] give the result of a form that multiplies by B, because the numerics depend only on _k_ (<<ztt-matmul-numerics>>).
-* A form that multiplies by B reads B by columns, which an implementation that reads both sources by rows executes at a fraction of the rate or with an added transpose unit, so kernels would be tuned to each implementation.
 * Kernels, packing routines, and compilers carry over between ext:zvvmm[] and Ztt.
+
+insn:mmaccn[] is needed only by the split forms of the attention backward pass (<<ztt-example-flash-bwd>>), in which K, Q, and dO are each the B of one product and the B^T^ of another, so that without it each is loaded twice.
+It reads B by columns, which an implementation that reads both sources by rows executes at a fraction of the rate or with an added transpose unit, so it is added for those forms only: for their datatypes, at _K_ = _N_, and with no form that transposes A.
+Sources narrower than 16 bits do not fit the register model: the _W_ products of a sub-dot-product (<<ztt-matmul-numerics>>) would take their elements of B from _W_ rows instead of one 16-bit container, and a B of _K_ > _N_ rows would not be a register operand.
+Other sources of 16 bits or more would fit, but no kernel needs them in registers in both orientations; for operands from memory, a transposing load and insn:mmacc[] serve every datatype.
 ====
 
 [#norm:Ztt_mmacc_spec]#The destination specifier names the datatype of C, which is both read and written; the source specifiers name the datatypes of A and B.#
@@ -1610,7 +1616,7 @@ Each output stays in accumulators across one loop:
 * Pass 1 computes D and dQ for a block of _N_ queries over all blocks of keys.
 * Pass 2 computes dK and dV for a block of _N_ keys over all blocks of queries, from S^T^ = K Q^T^, so that P^T^ and dS^T^ are the first sources of their matrix multiplies.
 
-Transposing loads supply K^T^, Q^T^, and dO^T^, so no register is transposed, and each block of an output is written once.
+insn:mmaccn[] multiplies by K, Q, and dO as loaded, so each is loaded once and no register is transposed, and each block of an output is written once.
 The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in pass 1 and down each column in pass 2; a store with _LD_ = 0 writes such a vector, every element of a row writing the same value to the same address.
 
 [source,asm]
@@ -1652,9 +1658,6 @@ The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in
         mzero       acc3                # acc2, acc3: dQ
 
 1:      mls.st.e16  m12x2, (a2), a3     # K: N keys
-        mls.tst.e16 m14, (a2), a3       # K^T, columns 0 to N-1 of K
-        add         t6, a2, t1
-        mls.tst.e16 m15, (t6), a3       # K^T, columns N to 2N-1 of K
         add         a2, a2, t2
         mls.st.e16  m16x2, (a4), a5     # V: N keys
         add         a4, a4, t3
@@ -1676,8 +1679,8 @@ The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in
         mmul        m20.fp32, m20.fp32, m18.fp32
         mmul        m21.fp32, m21.fp32, m19.fp32        # dS = P o (dP - D)
         mcvt        m22.bf16, m20x2.fp32
-        mmacc       acc2.fp32, m22.bf16, m14.bf16       # dQ += dS K
-        mmacc       acc3.fp32, m22.bf16, m15.bf16
+        mmaccn      acc2.fp32, m22.bf16, m12.bf16       # dQ += dS K
+        mmaccn      acc3.fp32, m22.bf16, m13.bf16
         bne         a2, t5, 1b
 
         mmul        acc2.fp32, acc2.fp32, s9
@@ -1709,14 +1712,8 @@ The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in
         mzero       acc3                # acc2, acc3: dK
 
 1:      mls.st.e16  m4x2, (a4), a5      # Q: N queries
-        mls.tst.e16 m6, (a4), a5        # Q^T, columns 0 to N-1 of Q
-        add         t6, a4, t1
-        mls.tst.e16 m7, (t6), a5        # Q^T, columns N to 2N-1 of Q
         add         a4, a4, t2
         mls.st.e16  m8x2, (a6), a7      # dO
-        mls.tst.e16 m10, (a6), a7       # dO^T
-        add         t6, a6, t1
-        mls.tst.e16 m11, (t6), a7
         add         a6, a6, t3
         mls.st.e32  m12x2, (s0)         # m, replicated down each column
         mls.st.e32  m14x2, (s1)         # 1/l
@@ -1737,16 +1734,16 @@ The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in
         mmul        m18.fp32, m18.fp32, m14.fp32
         mmul        m19.fp32, m19.fp32, m15.fp32        # P^T
         mcvt        m20.bf16, m18x2.fp32
-        mmacc       acc0.fp32, m20.bf16, m10.bf16       # dV += P^T dO
-        mmacc       acc1.fp32, m20.bf16, m11.bf16
+        mmaccn      acc0.fp32, m20.bf16, m8.bf16        # dV += P^T dO
+        mmaccn      acc1.fp32, m20.bf16, m9.bf16
         mcvt        m22x2.fp32, acc5.fp32
         msub        m22.fp32, m22.fp32, m16.fp32
         msub        m23.fp32, m23.fp32, m17.fp32
         mmul        m22.fp32, m22.fp32, m18.fp32
         mmul        m23.fp32, m23.fp32, m19.fp32        # dS^T
         mcvt        m24.bf16, m22x2.fp32
-        mmacc       acc2.fp32, m24.bf16, m6.bf16        # dK += dS^T Q
-        mmacc       acc3.fp32, m24.bf16, m7.bf16
+        mmaccn      acc2.fp32, m24.bf16, m4.bf16        # dK += dS^T Q
+        mmaccn      acc3.fp32, m24.bf16, m5.bf16
         bne         a4, t5, 1b
 
         mmul        acc2.fp32, acc2.fp32, s5
@@ -1763,7 +1760,7 @@ The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in
         msa.st.e16  acc3, (s6), s7      # dK[j][N]
 ----
 
-Per block, pass 1 takes four insn:mmacc[], four loads, and 16 other matrix instructions, using 23 matrix registers and four accumulators; pass 2 takes six insn:mmacc[], nine loads, and 17 other matrix instructions, using 25 matrix registers and six accumulators.
+Per block, pass 1 takes four matrix multiplies, two loads, and 16 other matrix instructions, using 23 matrix registers and four accumulators; pass 2 takes six matrix multiplies, five loads, and 17 other matrix instructions, using 20 matrix registers and six accumulators.
 Both passes compute S and dP, so each pair of blocks takes seven matrix multiplies of _N_^2^__d__ multiply-adds where five suffice.
 
 NOTE: Pass 2 holds dK, dV, S^T^, and dP^T^, 2__d__/__N__ + 2 accumulators, so eight cover _d_ = 3__N__; a larger head dimension computes dK and dV in separate passes, each recomputing S^T^.
@@ -1791,6 +1788,8 @@ A single pass over blocks of keys computes S and dP once, but loads, adds to, an
 include::ztt-insns/mcvt.adoc[]
 
 include::ztt-insns/mmacc.adoc[]
+
+include::ztt-insns/mmaccn.adoc[]
 
 [[ztt-encoding-map]]
 === Encoding Map

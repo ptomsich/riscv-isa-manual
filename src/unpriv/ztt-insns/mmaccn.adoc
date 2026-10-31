@@ -1,0 +1,120 @@
+<<<
+[#insns-mmaccn,reftext="Matrix Multiply-Accumulate by B"]
+==== insn:mmaccn[]
+
+Synopsis::
+Matrix multiply-accumulate by B, not transposed
+
+Mnemonic::
+insn:mmaccn[_md_._td_, _ms1_``x``__G__._t1_, _ms2_``x``__G__._t2_[, _rm_\][, sat\]]
++
+``x``__G__ is omitted for _G_ = 1.
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '001', attr: ['MM'] },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: 'ms2' },
+    { bits: 7, name: '0000001', attr: ['MMACCN'] },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: 'rm' },
+    { bits: 1, name: 'sat' },
+    { bits: 5, name: 't1' },
+    { bits: 5, name: 't2' },
+    { bits: 6, name: '000000' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _ms1_ | input | A, a group of _G_ matrix registers of datatype _t1_
+| _ms2_ | input | B, a group of _G_ matrix registers of datatype _t2_
+| _md_ | input and output | C, an accumulator register of datatype _td_
+|===
+
+Column Field::
+[#norm:mmaccn_kc]#insn:mmaccn[] has no column field: _K_ = _N_, and each source of element width _w_ occupies _G_ = _w_/16 registers, 1 for FP16 and BF16 and 2 for TF32 and FP32.#
+Bits 60:58, which hold `kc` in insn:mmacc[], are reserved.
+
+Description::
+[#norm:mmaccn_op]#insn:mmaccn[] computes C {leftarrow} C + A {times} B, as specified in <<ztt-ops-mmacc>>.#
+A and B are the _N_ {times} _N_ matrices held by _ms1_ and _ms2_.
++
+[#norm:mmaccn_fp]#C is computed as specified in <<ztt-matmul-numerics>>, with element (_k_, _j_) of B in place of element (_j_, _k_), rounded as selected by `rm` and saturated as selected by `sat`, and the floating-point exception flags accrue in csr:fflags[].#
+
+Exceptions::
+[#norm:mmaccn_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* _t1_ and _t2_ are not both FP16 or BF16, or both TF32 or FP32, or _td_ is not FP32 (<<ztt-mmacc-table>>).
+* A source names a group that is not aligned (<<ztt-groups>>).
+* _md_ is not less than _R_.
+* `rm` is reserved, or `rm` is DYN and csr:frm[] holds a reserved value.
+* A reserved field, bits 38:37 or 63:58, is not 0.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec64 = MMACCN(md, ms1, ms2, td, rm, sat, t1, t2)
+  <-> 0b000000 @ t2 @ t1 @ sat @ rm @ td @ 0b00 @ ZTT_ZLMAJ @ 0b11
+    @ 0b0000001 @ ms2 @ ms1 @ 0b001 @ md @ ZTT_ZLOP @ 0b11111
+
+function clause execute MMACCN(md, ms1, ms2, td, rm, sat, t1, t2) = {
+  /* Every check depends only on the encoding, R and frm. */
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  if not(ztt_mmaccn_supported(t1, t2, td)) then return Illegal_Instruction();
+  let G = ztt_type_width(t1) / 16;
+  if not(ztt_group_valid(ms1, G, t1) & ztt_group_valid(ms2, G, t2))
+  then return Illegal_Instruction();
+  let N = ztt_N();
+  if not(ztt_acc_valid(md, td)) then return Illegal_Instruction();
+
+  let rm_3b = if rm == 0b111 then fcsr[FRM] else rm;
+  match ztt_fp_rounding_mode(rm_3b) {
+    None()    => return Illegal_Instruction(),
+    Some(rmd) => {
+      var flags : bits(5) = zeros();
+      foreach (i from 0 to (N - 1)) {
+        foreach (j from 0 to (N - 1)) {
+          /* The model of ztt-matmul-numerics, with B(k, j) for B(j, k). */
+          let (c, f) = ztt_fp_mmn_element(md, ms1, ms2, G, td, t1, t2,
+                                           i, j, N, rmd, sat);
+          ztt_write_acc(md, td, i, j, c);
+          flags = flags | f;
+        }
+      };
+      accrue_fflags(flags);
+    }
+  };
+  ztt_set_dirty();
+  RETIRE_SUCCESS
+}
+
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztt[] (<<ext:ztt>>)
+|0.1
+|Draft
+|===
