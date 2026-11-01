@@ -675,10 +675,11 @@ The disclosed values apply to every datatype combination with those widths.#
 [#norm:Ztt_num_flags]#The flags accrued in csr:fflags[] are the bitwise OR of the flags raised by the operations of the model, in any order.#
 
 NOTE: An implementation that aligns C~__i__,__j__~ with the products and rounds once is described by `psm` = 0 and `rnd` = `xct` when its alignment loses no bits.
-When the alignment truncates, the bits lost depend on the exponent of C~__i__,__j__~, so that the result is not that of forming _S_ first; `psm` = 1 with C~__i__,__j__~ in the reduction describes it.
+When the alignment truncates bits of the products or of C~__i__,__j__~, the bits lost depend on the exponent of C~__i__,__j__~, so that the result is not that of forming _S_ first; `psm` = 1 with C~__i__,__j__~ in the reduction describes it.
 Either way, one rounding spans at most one step.
 
-NOTE: _P_, `psm`, and `rnd` are the parameters `G`, `psm`, and `rnd` of the floating-point matrix multiplies of ext:zvvmm[], with `rm` in place of `frm`, so the same disclosure describes both.
+NOTE: _P_, `psm`, and `rnd` are the parameters `G`, `psm`, and `rnd` of the floating-point matrix multiplies of ext:zvvmm[], with `rm` in place of `frm`, so a disclosure for ext:zvvmm[] is also one for Ztt.
+A `psm` = 1 reduction that takes C~__i__,__j__~ has no counterpart in ext:zvvmm[].
 
 [[ztt-exceptions]]
 === Exception Handling
