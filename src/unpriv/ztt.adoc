@@ -656,8 +656,8 @@ The result is that of applying the steps one at a time, in increasing order of _
 Each group is reduced to a partial sum _S_ according to an implementation-defined parameter `psm`:#
 
 * [#norm:Ztt_num_psm0]#If `psm` = 0, _S_ is exact.#
-* [#norm:Ztt_num_psm1]#If `psm` = 1, _S_ is formed by an implementation-defined non-exact reduction of the group's products.
-The implementation discloses the algorithm and the values of its parameters.#
+* [#norm:Ztt_num_psm1]#If `psm` = 1, _S_ is formed by an implementation-defined non-exact reduction of the group's products, which may also take C~__i__,__j__~ as an addend.
+The implementation discloses the algorithm, the values of its parameters, and whether the reduction takes C~__i__,__j__~.#
 
 [#norm:Ztt_num_rnd]#Before it is accumulated, _S_ is treated according to an implementation-defined parameter `rnd`:#
 
@@ -666,12 +666,17 @@ The implementation discloses the algorithm and the values of its parameters.#
 * [#norm:Ztt_num_rnd_xct]#If `rnd` = `xct`, _S_ is not rounded.#
 
 [#norm:Ztt_num_acc]#Each group then updates the element as C~__i__,__j__~ {leftarrow} round~rm~(C~__i__,__j__~ + _S_), rounding as selected by `rm`.#
+[#norm:Ztt_num_acc_c]#When the reduction takes C~__i__,__j__~, _S_ already includes it, `rnd` is `xct`, and the group updates the element as C~__i__,__j__~ {leftarrow} round~rm~(_S_).#
 
 [#norm:Ztt_num_disclose]#An implementation discloses its (_P_, `psm`, `rnd`) for each combination of source element widths and C datatype that it supports.
 The disclosed values apply to every datatype combination with those widths.#
 
 [#norm:Ztt_num_special]#Special values are handled as if each product were exact and each sum and rounding of the model were the corresponding IEEE 754 operation: an invalid product or sum, or a NaN source, produces the canonical NaN.#
 [#norm:Ztt_num_flags]#The flags accrued in csr:fflags[] are the bitwise OR of the flags raised by the operations of the model, in any order.#
+
+NOTE: An implementation that aligns C~__i__,__j__~ with the products and rounds once is described by `psm` = 0 and `rnd` = `xct` when its alignment loses no bits.
+When the alignment truncates, the bits lost depend on the exponent of C~__i__,__j__~, so that the result is not that of forming _S_ first; `psm` = 1 with C~__i__,__j__~ in the reduction describes it.
+Either way, one rounding spans at most one step.
 
 NOTE: _P_, `psm`, and `rnd` are the parameters `G`, `psm`, and `rnd` of the floating-point matrix multiplies of ext:zvvmm[], with `rm` in place of `frm`, so the same disclosure describes both.
 
