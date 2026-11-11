@@ -121,7 +121,6 @@ NOTE: Software uses the row length in bytes to step addresses and to scale leadi
 Ztt has no exception-flag or rounding-mode state of its own.
 
 [#norm:Ztt_fs]#For the purposes of csr:mstatus[fs] and csr:vsstatus[fs], a Ztt instruction that names a floating-point datatype is a floating-point instruction that writes csr:fflags[].#
-// OPEN: dependency of the floating-point datatypes on F or Zfinx (cf. Zve32f).
 
 NOTE: A matrix unit that completes Ztt instructions after the hart has retired them can merge their flags into csr:fflags[] late and in any order, because accrued flags never trap.
 Only accesses to csr:fflags[] and csr:fcsr[] must be ordered with older Ztt instructions: a read must observe their flags, and a write must not be overtaken by them, which an implementation may ensure by waiting for them to complete.
@@ -708,6 +707,8 @@ Extensions that add matrix-multiply datatype combinations are named `Ztt` + _inp
 
 // The base extension: the instructions it includes and its dependencies.
 
+[#norm:Ztt_dep_f]#Matrix multiplies with FP32 accumulation depend on ext:f[], as those with FP64 accumulation depend on ext:d[] (<<ztt-ext-acc64>>).#
+
 // Candidate subextensions, one subsection each with dependencies, instruction list,
 // and Included-in references:
 // - mixed-width matrix multiply: sources of different element widths, the narrower
@@ -727,12 +728,10 @@ Implementing any of them adds accumulator pairs (<<ztt-acc-layout>>) and the `e6
 [%autowidth,float="center",align="center",cols="<,<,<,<",options="header"]
 |===
 |Extension |Dependencies |A and B |C
-|Zttfp64mm |ext:ztt[] |FP64 |FP64
-|Zttfp32fp64mm |ext:ztt[] |TF32, FP32 |FP64
+|Zttfp64mm |ext:ztt[], ext:d[] |FP64 |FP64
+|Zttfp32fp64mm |ext:ztt[], ext:d[] |TF32, FP32 |FP64
 |Ztti16i64mm |ext:ztt[] |INT16, UINT16 |INT64, UINT64
 |===
-// OPEN: whether Zttfp64mm and Zttfp32fp64mm depend on D, as Ztt's floating-point
-// support depends on F (open for the base extension).
 
 NOTE: The extensions are separate so that an implementation can provide FP64 matrix multiplication without 64-bit integer accumulation, or the reverse.
 Accumulator registers stay 32 bits wide, so an implementation of any of them keeps all _R_ accumulators for the other datatypes.
