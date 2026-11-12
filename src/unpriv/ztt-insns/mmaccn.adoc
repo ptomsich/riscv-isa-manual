@@ -63,6 +63,7 @@ Exceptions::
 * csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
 * _t1_ and _t2_ are not both FP16 or BF16, or both TF32 or FP32, or _td_ is not FP32 (<<ztt-mmacc-table>>).
 * A source names a group that is not aligned (<<ztt-groups>>).
+* The sources are TF32 or FP32 and ext:zttg[] is not implemented.
 * _md_ is not less than _R_.
 * `rm` is reserved, or `rm` is DYN and csr:frm[] holds a reserved value.
 * A reserved field, bits 38:37 or 63:58, is not 0.
@@ -79,6 +80,7 @@ function clause execute MMACCN(md, ms1, ms2, td, rm, sat, t1, t2) = {
   if not(ztt_enabled()) then return Illegal_Instruction();
   if not(ztt_mmaccn_supported(t1, t2, td)) then return Illegal_Instruction();
   let G = ztt_type_width(t1) / 16;
+  if G > 1 & not(currentlyEnabled(Ext_Zttg)) then return Illegal_Instruction();
   if not(ztt_group_valid(ms1, G, t1) & ztt_group_valid(ms2, G, t2))
   then return Illegal_Instruction();
   let N = ztt_N();
@@ -114,7 +116,11 @@ Included in::
 |Minimum version
 |Lifecycle state
 
-|ext:ztt[] (<<ext:ztt>>)
+|ext:zttn[] (<<ext:zttn>>)
+|0.1
+|Draft
+
+|ext:zttn[] with ext:zttg[] (<<ext:zttg>>), for TF32 and FP32 sources
 |0.1
 |Draft
 |===

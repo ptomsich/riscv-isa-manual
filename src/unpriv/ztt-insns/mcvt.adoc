@@ -107,6 +107,7 @@ Exceptions::
 * The pair of _t1_ and _td_ is not supported (<<ztt-ops-mcvt>>), or names a reserved type code.
 * `kc` is greater than 5, or `kc` is not 0 and an operand is an accumulator register.
 * A matrix-register operand's _G_ is not 1, 2, or 4 and the operand is not a slot, or is not valid for its datatype, or names a group that is not aligned (<<ztt-groups>>).
+* A matrix-register operand's _G_ is 2 or 4 and ext:zttg[] is not implemented.
 * A slot index is 16/__w__ or more, or is not 0 for an operand that is not a slot.
 * An accumulator register number is not less than _R_, or is odd for a 64-bit datatype.
 * `rm` is reserved for the datatypes (<<ztt-rounding>>), or `rm` is DYN and csr:frm[] holds a reserved value.
@@ -134,7 +135,8 @@ function clause execute MCVT(cls, md, ms1, td, rm, sat, t1, kc, sd, s1) = {
   if unsigned(kc) > 5 then return Illegal_Instruction();
   let (d_is_m, s_is_m) = mcvt_is_m(cls);
   if not(d_is_m & s_is_m) & kc != 0b000 then return Illegal_Instruction();
-  /* A matrix-register operand is a group of G = 2^kc * w / 16 registers, or a slot. */
+  /* A matrix-register operand is a group of G = 2^kc * w / 16 registers, or a slot;
+     ztt_cvt_operand returns None() for G > 1 without Zttg. */
   let dst : option(ztt_operand) = ztt_cvt_operand(d_is_m, md, td, kc, sd);
   let src : option(ztt_operand) = ztt_cvt_operand(s_is_m, ms1, t1, kc, s1);
   if dst == None() | src == None() then return Illegal_Instruction();
@@ -175,7 +177,11 @@ Included in::
 |Minimum version
 |Lifecycle state
 
-|ext:ztt[] (<<ext:ztt>>)
+|ext:zttc[] (<<ext:zttc>>)
+|0.1
+|Draft
+
+|ext:zttg[] (<<ext:zttg>>), for operands of register groups
 |0.1
 |Draft
 
