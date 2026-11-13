@@ -565,8 +565,54 @@ Encoding the group size of each operand separately would express the same set of
 [[ztt-legality]]
 ==== Supported Type Combinations and Illegal Instructions
 
-// An unsupported operation and type combination raises an illegal-instruction exception.
-// The mandatory baseline set of combinations (decision 8).
+// OPEN: the accumulator datatypes of the elementwise operations and reductions with
+// an accumulator operand; whether a reserved value in frm traps.
+
+An operation is defined for certain combinations of the datatypes of its operands, and an extension provides all those of its instructions.
+
+[#norm:Ztt_legal_combos]#An instruction that names a datatype combination that its operation does not support raises an illegal-instruction exception.#
+[#norm:Ztt_legal_mandatory]#An implementation of an extension supports every combination that this chapter defines for the instructions and operand forms of that extension, except those that depend on an extension it does not implement: ext:f[] or ext:d[] for the floating-point datatypes (<<ztt-extensions>>), and a 64-bit accumulation extension (<<ztt-ext-acc64>>).#
+<<ztt-legality-table>> summarizes the combinations.
+
+[[ztt-legality-table]]
+.Supported datatype combinations.
+[%autowidth,float="center",align="center",cols="<,<",options="header"]
+|===
+|Instructions |Datatypes
+|insn:mmacc[] |<<ztt-mmacc-table>>, and <<ztt-acc64-table>> with a 64-bit accumulation extension
+|insn:mmaccn[] |FP16, BF16, TF32, or FP32 sources, and an FP32 destination
+|insn:mmaccs[] |<<ztt-mx-table>>
+|insn:madd[], insn:msub[], insn:mmul[], insn:mmax[], insn:mmin[], insn:mldexp[], insn:mredmax[], insn:mredmin[] |One datatype: an integer datatype, or a floating-point datatype other than E8M0 and TF32
+|insn:madd[] of a matrix-register operand to an accumulator |A source datatype that converts exactly to the destination datatype (<<ztt-ops-acc>>)
+|insn:mneg[], insn:mabs[] |As insn:madd[], without the unsigned integer datatypes
+|insn:msmul[] |One signed integer datatype
+|insn:mfma[] |One floating-point datatype of insn:madd[]
+|insn:mexp2[], insn:mrec[], insn:mrsqrt[] |One of FP16, BF16, and FP32
+|Compares |Sources of one datatype of insn:madd[], and the unsigned integer datatype of their width as the destination
+|Bitwise operations, insn:mrol[] |One unsigned integer datatype
+|insn:mcvt[] |Any two datatypes, with the exceptions of <<ztt-ops-mcvt>>
+|32-bit instructions |None; loads, stores, and moves carry an element size (<<ztt-esize-table>>)
+|===
+
+NOTE: Software thus tests for extensions and not for single combinations.
+A combination that only some implementations need, such as 64-bit accumulation, is an extension of its own.
+
+[#norm:Ztt_legal_rsv]#An instruction with an encoding that this chapter calls reserved raises an illegal-instruction exception.#
+[#norm:Ztt_legal_acc]#So does an instruction that names an accumulator register number of _R_ or more.#
+
+In summary, a Ztt instruction raises an illegal-instruction exception if:
+
+* csr::[ts] is Off, or csr::[fs] is Off and the instruction names a floating-point datatype (<<ztt-mstatus>>, <<ztt-fcsr>>);
+* an implemented extension does not provide it, with its operand forms, its datatypes, and the accumulator registers it names (<<ztt-extensions>>);
+* it names a reserved type code, or a datatype combination that its operation does not support;
+* a field holds a reserved value, or a field that the instruction does not use is not zero (<<ztt-specifiers>>, <<ztt-encoding-64>>);
+* the alignment of a register group or an accumulator pair, or the number of registers of an operand, is not valid (<<ztt-groups>>, <<ztt-acc-layout>>, <<ztt-enc-columns>>);
+* a slot, part, or scale-row index is out of range for _N_ and RLEN (<<ztt-ops-mcvt>>, <<ztt-ext-mx>>);
+* an X register supplies or receives an element wider than XLEN (<<ztt-ops-elementwise>>, <<ztt-ops-mmvxm>>, <<ztt-ops-const>>).
+
+The behavior of DYN while csr:frm[] holds a reserved value is not an encoding, and is reserved as in F (<<ztt-rounding>>).
+
+NOTE: A reserved encoding traps so that software cannot depend on its behavior before a later extension defines it, and so that the exception is decided at decode (<<ztt-exceptions>>).
 
 [[ztt-memory]]
 === Matrix Loads and Stores
@@ -1230,7 +1276,7 @@ msmul.row acc1.int32, acc1.int32, m14x2.int32, rmm  # per-channel multiplier
 ===== Compares
 
 [#norm:Ztt_mcmp]#insn:mcmpeq[], insn:mcmpne[], insn:mcmplt[], insn:mcmple[], insn:mcmpgt[], and insn:mcmpge[] compare corresponding elements of two sources of one datatype and write all ones where the comparison holds and zero elsewhere.
-The destination datatype is the unsigned integer datatype of the same width.
+The sources have a datatype of the arithmetic operations (<<ztt-ops-arith>>), and the destination datatype is the unsigned integer datatype of the same width.
 An `rm` other than 0 and `sat` are reserved for them.#
 [#norm:Ztt_mcmp_fp]#For floating-point datatypes, a comparison with a NaN is false except for insn:mcmpne[]; insn:mcmpeq[] and insn:mcmpne[] raise NV for a signaling NaN, and the others for any NaN, as insn:feq.s[], insn:flt.s[], and insn:fle.s[] do.#
 
