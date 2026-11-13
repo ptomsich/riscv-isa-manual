@@ -749,6 +749,16 @@ Restarting a store rewrites the elements written before the exception with the s
 [[ztt-extensions]]
 === Extensions in the Ztt Family
 
+The extensions of the family build on one another, as the embedded vector extensions build up to V: a smaller matrix unit implements fewer forms, and its software runs on a larger one (<<ztt-ext-figure>>).
+ext:ztte[] is for the smallest units: each operand is one matrix register, whose rows may be shorter than those of the other extensions.
+ext:zttc[] fixes the row length, so that a matrix register holds an _N_ {times} _N_ matrix of 16-bit elements, and operates on accumulators in place.
+ext:zttg[] combines two or four matrix registers into one operand, for a longer inner dimension and for wider elements.
+ext:zttn[] adds the matrix multiply that reads its second source by columns, and ext:ztt[] comprises them all.
+
+[[ztt-ext-figure]]
+.The extensions of the Ztt family and their operands. An arrow points to the extension that depends on its origin. Registers are drawn by rows and columns, a matrix register with 16-bit elements.
+image::ztt-extensions.svg[align="center",scaledwidth=90%]
+
 [#norm:Ztt_ext_model]#Every extension of <<ztt-ext-table>> has the registers, the CSRs, and the context status of the programmer's model (<<ztt-model>>).#
 
 [[ztt-ext-table]]
@@ -766,8 +776,6 @@ Restarting a store rewrites the elements written before the exception with the s
 [#norm:Ztt_ext_subset]#An instruction has the same encoding in every extension that includes it, and the same behavior for a given _N_ and RLEN.#
 ext:zttc[] is thus a subset of ext:zttg[], and ext:zttg[] of ext:ztt[]: software written for one executes unchanged on an implementation of the next, for any _N_.
 Software for ext:ztte[] executes unchanged on ext:zttc[] if it supports RLEN = 16__N__: it reads the row length from csr:amenlenb[] and, where it converts between accumulator and matrix registers, selects the sequence for the ratio of RLEN to _N_ (<<ext:ztte>>).
-
-NOTE: The subsets relate to ext:ztt[] as the embedded vector extensions relate to V: a smaller matrix unit implements fewer forms, and its software runs on a larger one.
 
 NOTE: Such software computes the same results on every implementation, except for floating-point matrix multiplies, whose roundings depend on RLEN and on implementation-defined parameters (<<ztt-matmul-numerics>>), and for insn:mexp2[], insn:mrec[], and insn:mrsqrt[], whose inexact results are implementation-defined (<<ztt-ops-mexp2>>).
 
@@ -793,8 +801,11 @@ The instructions that name an accumulator register are then insn:mmacc[], insn:m
 
 [#norm:Ztt_ext_e_rlen]#In ext:ztte[], RLEN is 16__N__, 8__N__, 4__N__, or 2__N__.#
 // OPEN: the permitted ratios of RLEN to N.
-A shorter row reduces the state of the matrix registers and the _K_ of a matrix multiply in proportion, and leaves the _N_ {times} _N_ result of each instruction unchanged.
 Each source of a matrix multiply is one register, so ext:ztte[] provides the combinations of <<ztt-mmacc-table>> with sources of 16 bits and narrower, at the _K_ of one register: from RLEN/16 for 16-bit sources to RLEN/2 for 2-bit sources.
+
+NOTE: The row length sets the size of a matrix unit: a matrix multiply forms _N_^2^ dot products of _K_ products each, and the 32 matrix registers hold 32__N__ {times} RLEN bits.
+With RLEN = 4__N__, for example, both are a quarter of those with RLEN = 16__N__ for the same _N_, while each instruction still produces an _N_ {times} _N_ result.
+In return, a given inner dimension takes four times the matrix multiplies, and an accumulator register converts in parts.
 
 A matrix-register operand then has fewer columns than an accumulator register, which converts in 16__N__/RLEN parts (<<ztt-ops-mcvt>>):
 // OPEN: forms that convert a whole register of elements narrower than 16 bits (kc > 0
