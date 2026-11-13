@@ -17,7 +17,7 @@ Supervisor management of Ztt contexts is specified by ext:ssttctx[] in the privi
 ====
 Datatypes are a property of the instruction, not of the registers: every instruction names the datatypes of its operands, and the registers are untyped containers.
 An instruction therefore depends on no configuration state, its legality and the registers it accesses are known when it is decoded, and a compiler, disassembler, or debugger reads its semantics from the instruction alone.
-The tile side _N_ is the only implementation parameter visible to software; like VLEN, it scales loop bounds and strides, but not register numbers or data layouts.
+The tile side _N_ is the only implementation parameter visible to software, apart from the row length in ext:ztte[] (<<ext:ztte>>); like VLEN, it scales loop bounds and strides, but not register numbers or data layouts.
 ====
 
 [[ztt-params]]
@@ -29,6 +29,9 @@ The tile side _N_ is the only implementation parameter visible to software; like
 _N_ sets the number of elements a register holds and the inner dimension of a matrix multiply.
 It does not change which registers an operand occupies.
 
+[#norm:Ztt_RLEN]#A row of a matrix register is RLEN bits long, where RLEN = 16__N__, except that ext:ztte[] permits shorter rows.#
+This chapter describes RLEN = 16__N__; <<ext:ztte>> lists what changes for shorter rows.
+
 NOTE: A row of packed 6-bit elements (four in three bytes) or of 2-bit elements (four per byte) is a whole number of bytes only when _N_ is a multiple of 4.
 
 Ztt supports binary code that executes on harts with different values of _N_, provided the harts support the datatypes and instructions it uses.
@@ -38,7 +41,7 @@ NOTE: Thread contexts with live Ztt state cannot be migrated between harts with 
 [[ztt-model]]
 === Attached Matrix Programmer's Model
 
-[#norm:Ztt_state]#Ztt adds to each hart 32 matrix registers, `m0` to `m31`, _R_ accumulator registers, `acc0` to ``acc``__R__``−1``, and the read-only CSR csr:amenlenb[].#
+[#norm:Ztt_state]#Ztt adds to each hart 32 matrix registers, `m0` to `m31`, _R_ accumulator registers, `acc0` to ``acc``__R__``−1``, and the read-only CSRs csr:amenlenb[] and csr:amerows[].#
 A matrix multiply reads its operands from matrix registers and accumulates into an accumulator register; the other operations read and write matrix registers.
 
 NOTE: The state is architecturally per hart, but a matrix unit may hold several contexts: one context for one hart, several contexts for one hart, such as for an interactive and a real-time task, or contexts for several harts.
@@ -72,7 +75,7 @@ Fewer accumulators would slice the common head dimensions of 64 and 128 at small
 It is defined analogously to the floating-point context-status field, csr::[fs].#
 // TS (tile status); MS is used by Zvt.
 
-[#norm:Ztt_mstatus_ts_off]#Attempts to execute any Ztt instruction, or to access csr:amenlenb[], raise an illegal-instruction exception when csr:mstatus[ts] is Off.#
+[#norm:Ztt_mstatus_ts_off]#Attempts to execute any Ztt instruction, or to access csr:amenlenb[] or csr:amerows[], raise an illegal-instruction exception when csr:mstatus[ts] is Off.#
 
 [#norm:Ztt_mstatus_ts_dirty]#When csr:mstatus[ts] is Initial or Clean, executing any instruction that changes Ztt state changes csr:mstatus[ts] to Dirty.
 Implementations may also change csr:mstatus[ts] from Initial or Clean to Dirty at any time, even when Ztt state does not change.#
@@ -85,7 +88,7 @@ Implementations may also change csr:mstatus[ts] from Initial or Clean to Dirty a
 [#norm:Ztt_vsstatus_ts]#When the hypervisor extension is present, a Ztt context-status field, csr::[ts], is added to csr:vsstatus[][26:25].
 It is defined analogously to the floating-point context-status field, csr::[fs].#
 
-[#norm:Ztt_vsstatus_ts_off]#When V=1, both csr:vsstatus[ts] and csr:mstatus[ts] are in effect: attempts to execute any Ztt instruction, or to access csr:amenlenb[], raise an illegal-instruction exception when either field is Off.#
+[#norm:Ztt_vsstatus_ts_off]#When V=1, both csr:vsstatus[ts] and csr:mstatus[ts] are in effect: attempts to execute any Ztt instruction, or to access csr:amenlenb[] or csr:amerows[], raise an illegal-instruction exception when either field is Off.#
 
 [#norm:Ztt_vsstatus_ts_dirty]#When V=1 and neither csr:vsstatus[ts] nor csr:mstatus[ts] is Off, executing any instruction that changes Ztt state changes both fields to Dirty.
 Implementations may also change csr:mstatus[ts] or csr:vsstatus[ts] from Initial or Clean to Dirty at any time, even when Ztt state does not change.#
@@ -107,12 +110,20 @@ Software executes it where its use of Ztt state ends, so that the state is not s
 [[ztt-amenlenb]]
 ==== Matrix Row Byte Length (csr:amenlenb[]) Register
 
-[#norm:Ztt_amenlenb]#The _XLEN_-bit-wide read-only CSR csr:amenlenb[] holds 2__N__, the length in bytes of a row of a matrix register.#
+[#norm:Ztt_amenlenb]#The _XLEN_-bit-wide read-only CSR csr:amenlenb[] holds RLEN/8, the length in bytes of a row of a matrix register.#
 // OPEN: CSR address, in the unprivileged read-only range next to vlenb.
 
 NOTE: The value in csr:amenlenb[] is a design-time constant in any implementation.
 
 NOTE: Software uses the row length in bytes to step addresses and to scale leading dimensions, without converting from _N_.
+
+[[ztt-amerows]]
+==== Matrix Row Count (csr:amerows[]) Register
+
+[#norm:Ztt_amerows]#The _XLEN_-bit-wide read-only CSR csr:amerows[] holds _N_, the number of rows of a matrix register.#
+// OPEN: CSR address, next to amenlenb.
+
+NOTE: _N_ is half the value of csr:amenlenb[] except in ext:ztte[] (<<ext:ztte>>), whose software reads both registers.
 
 [[ztt-fcsr]]
 ==== Floating-Point Exception Flags and Rounding Mode
@@ -735,14 +746,15 @@ Restarting a store rewrites the elements written before the exception with the s
 [[ztt-extensions]]
 === Extensions in the Ztt Family
 
-[#norm:Ztt_ext_model]#Every extension of <<ztt-ext-table>> has the registers, the CSR, and the context status of the programmer's model (<<ztt-model>>).#
+[#norm:Ztt_ext_model]#Every extension of <<ztt-ext-table>> has the registers, the CSRs, and the context status of the programmer's model (<<ztt-model>>).#
 
 [[ztt-ext-table]]
 .Extensions of the Ztt family.
 [%autowidth,float="center",align="center",cols="<,<,<",options="header"]
 |===
 |Extension |Dependencies |Adds
-|ext:zttc[] |– |The instructions other than insn:mmaccn[], on operands of one matrix register or one slot
+|ext:ztte[] |– |The instructions other than insn:mmaccn[] and the operations on accumulators, on operands of one matrix register or one slot
+|ext:zttc[] |ext:ztte[], with RLEN = 16__N__ |Operations on accumulators
 |ext:zttg[] |ext:zttc[] |Operands of register groups
 |ext:zttn[] |ext:zttc[], ext:f[] |insn:mmaccn[]
 |ext:ztt[] |ext:zttg[], ext:zttn[] |–
@@ -750,6 +762,7 @@ Restarting a store rewrites the elements written before the exception with the s
 
 [#norm:Ztt_ext_subset]#An instruction has the same encoding and behavior in every extension that includes it.#
 ext:zttc[] is thus a subset of ext:zttg[], and ext:zttg[] of ext:ztt[]: software written for one executes unchanged on an implementation of the next, for any _N_.
+Software for ext:ztte[] executes unchanged on ext:zttc[] if it reads the row length from csr:amenlenb[] (<<ext:ztte>>).
 
 [#norm:Ztt_dep_f]#Matrix multiplies with FP32 accumulation depend on ext:f[], as those with FP64 accumulation depend on ext:d[] (<<ztt-ext-acc64>>).#
 
@@ -760,20 +773,66 @@ NOTE: The subsets relate to ext:ztt[] as the embedded vector extensions relate t
 
 Extensions that add matrix-multiply datatype combinations are named `Ztt` + _input type_ + _output type_ + `mm`, with the type tokens of ext:zvvmm[]; the output type is omitted when it equals the input type.
 
+[[ext:ztte]]
+==== ext:ztte[] Embedded Attached Matrix Extension
+
+ext:ztte[] serves the smallest matrix units: the rows of its matrix registers may be shorter than those of the other extensions, while its accumulator registers remain _N_ {times} _N_.
+
+[#norm:Ztt_ext_e]#ext:ztte[] includes every instruction of this chapter except insn:mmaccn[], the elementwise operations on accumulators (<<ztt-ops-acc>>), and the reductions with an accumulator operand (<<ztt-ops-reduce>>), in the forms in which each matrix-register operand is one register or a slot (<<ztt-operands>>).
+A form in which an operand occupies a register group raises an illegal-instruction exception unless ext:zttg[] is implemented.#
+The instructions that name an accumulator register are then insn:mmacc[], insn:mzero[], insn:mcvt[], and the accumulator loads and stores.
+
+[#norm:Ztt_ext_e_rlen]#In ext:ztte[], RLEN is 16__N__, 8__N__, 4__N__, or 2__N__, and a multiple of 64, so that a row holds a whole number of elements of every width.#
+// OPEN: the permitted ratios of RLEN to N.
+RLEN/16 then takes the place of _N_ as the number of 16-bit columns of a matrix register:
+
+[[ztt-rlen-table]]
+.Quantities that depend on the row length.
+[%autowidth,float="center",align="center",cols="<,<,<",options="header"]
+|===
+|Quantity |RLEN = 16__N__ |In general
+|Bytes of a matrix-register row (<<ztt-mreg-layout>>) |2__N__ |RLEN/8
+|Columns of a register of _w_-bit elements (<<ztt-columns-table>>) |16__N__/__w__ |RLEN/__w__
+|Columns of a slot (<<ztt-slots>>), and of the operands of a reduction (<<ztt-ops-reduce>>) |_N_ |RLEN/16
+|Operand columns _C_ (<<ztt-enc-columns>>) |2^`kc`^{nbsp}{times}{nbsp}__N__ |2^`kc`^{nbsp}{times}{nbsp}RLEN/16
+|Bytes of a matrix-register image (<<ztt-register-images>>) |2__N__^2^ |_N_{nbsp}{times}{nbsp}RLEN/8
+|Sub-dot-products of a step (<<ztt-matmul-numerics>>), which _P_ divides |_N_ |RLEN/16
+|===
+
+The number of rows, the 16/__w__ slots of a register, the _G_ of an operand, and the accumulator registers do not depend on RLEN.
+Each source of a matrix multiply is one register, so ext:ztte[] provides the combinations of <<ztt-mmacc-table>> with sources of 16 bits and narrower, at the _K_ of one register: from RLEN/16 for 16-bit sources to RLEN/2 for 2-bit sources.
+
+[#norm:Ztt_ext_e_cvt]#In a conversion between an accumulator register and a matrix-register operand, the accumulator operand designates part _t_ of the register, its columns _t_{nbsp}{times}{nbsp}RLEN/16 to (__t__ + 1){nbsp}{times}{nbsp}RLEN/16 − 1, where the index _t_ is encoded in the slot-index field of that operand (<<ztt-encoding-64>>).
+An index of 16__N__/RLEN or more raises an illegal-instruction exception.
+Writing a part leaves the other columns of the accumulator register unchanged.#
+In assembly, the index follows the register name in brackets, as in `acc0[3].fp32`, and may be omitted when it is 0.
+A conversion between two accumulator registers converts all _N_ columns.
+// OPEN: forms that convert a whole register of elements narrower than 16 bits (kc > 0
+// with an accumulator operand), where it holds no more than N columns.
+
+[source,asm]
+----
+mmacc  acc0.int32, m0.int8, m1.int8          # K = RLEN/8
+mcvt   m4[0].int8, acc0[1].int32, sat        # part 1 of acc0 into slot 0 of m4
+mcvt   acc0.int8, acc0.int32, sat            # all columns, in place, for an e8 accumulator store
+----
+
+NOTE: A shorter row reduces the state of the matrix registers and the _K_ of a matrix multiply in proportion, and leaves the _N_ {times} _N_ result of each instruction unchanged.
+Software reads the row length from csr:amenlenb[] and _N_ from csr:amerows[], steps the inner dimension by the first, and converts an accumulator register in 16__N__/RLEN parts.
+With RLEN = 16__N__, the only part is the whole register, so such software executes unchanged on ext:zttc[]; software that assumes RLEN = 16__N__ does not execute correctly on shorter rows.
+
+Where this chapter requires harts to have the same _N_, as for a shared matrix unit or a migrated context, they also have the same RLEN.
+
 [[ext:zttc]]
 ==== ext:zttc[] Compact Attached Matrix Extension
 
-[#norm:Ztt_ext_c]#ext:zttc[] includes every instruction of this chapter except insn:mmaccn[], in the forms in which each matrix-register operand is one register or a slot (<<ztt-operands>>).
-A form in which an operand occupies a register group raises an illegal-instruction exception unless ext:zttg[] is implemented.#
+[#norm:Ztt_ext_c]#ext:zttc[] depends on ext:ztte[], requires RLEN = 16__N__, and adds the elementwise operations on accumulators (<<ztt-ops-acc>>) and the reductions with an accumulator operand (<<ztt-ops-reduce>>).#
+It thus includes every instruction of this chapter except insn:mmaccn[], on operands of one register or one slot.
 
-Each source of a matrix multiply is then one register, so ext:zttc[] provides the combinations of <<ztt-mmacc-table>> with sources of 16 bits and narrower, at the _K_ of one register (<<ztt-columns-table>>): from _N_ for 16-bit sources to 8__N__ for 2-bit sources.
+A matrix register then holds an _N_ {times} _N_ matrix of 16-bit elements and a slot has the shape of an accumulator register, so a conversion transfers a whole accumulator register, and the _K_ of a matrix multiply is from _N_ for 16-bit sources to 8__N__ for 2-bit sources (<<ztt-columns-table>>).
 
 NOTE: An _N_ {times} _N_ matrix of 32-bit elements does not fit one matrix register.
 Software for ext:zttc[] holds such a matrix in an accumulator register: the accumulator loads and stores transfer it, and insn:mcvt[] converts it to and from the datatypes of 16 bits and narrower.
-
-// OPEN: an embedded extension below ext:zttc[], for matrix registers whose rows are shorter
-// than 2N bytes. It is a subset of ext:zttc[] only if software reads the row length at
-// run time, as it reads N.
 
 [[ext:zttg]]
 ==== ext:zttg[] Register-Group Extension
@@ -902,10 +961,10 @@ The supported combinations are those of a single input width that machine-learni
 [%autowidth,float="center",align="center",cols="<,<,<",options="header"]
 |===
 |A {times} B {rightarrow} C |Use |Provided by
-|E2M3 or E3M2 {times} E4M3 or E5M2 {rightarrow} FP32 |MX training with FP6 and FP8 operands |ext:zttc[]
+|E2M3 or E3M2 {times} E4M3 or E5M2 {rightarrow} FP32 |MX training with FP6 and FP8 operands |ext:ztte[]
 |TF32 {times} TF32 {rightarrow} FP32 |Training on FP32 data |ext:zttg[]
-|INT2 {times} INT2 {rightarrow} INT32 |2-bit and ternary networks |ext:zttc[]
-|INT8 {times} INT8 {rightarrow} INT32 |FP64 emulation by the Ozaki scheme |ext:zttc[]
+|INT2 {times} INT2 {rightarrow} INT32 |2-bit and ternary networks |ext:ztte[]
+|INT8 {times} INT8 {rightarrow} INT32 |FP64 emulation by the Ozaki scheme |ext:ztte[]
 |INT4 {times} INT8 {rightarrow} INT32 |4-bit weights, 8-bit activations |Mixed-width extension
 |INT2 {times} INT8 {rightarrow} INT32 |Ternary weights, 8-bit activations |Mixed-width extension
 |E2M1 {times} E4M3 {rightarrow} FP32 |FP4 weights, FP8 activations |Mixed-width extension

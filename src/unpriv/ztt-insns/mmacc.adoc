@@ -71,6 +71,7 @@ Source _i_, of element width _w~i~_, occupies _Gi_ = 2^`kc`^{nbsp}{times}{nbsp}_
 +
 A 64-bit source (<<ztt-ext-acc64>>) occupies four registers with `kc` = 0.
 Group sizes of 2 and 4 require ext:zttg[] (<<ext:zttg>>).
+With RLEN below 16__N__, RLEN/16 takes the place of _N_ in _K_ (<<ext:ztte>>).
 In assembly, `kc` follows from the group suffixes of the sources, which must give both the same number of columns.
 
 Description::
@@ -114,7 +115,7 @@ function clause execute MMACC(md, ms1, ms2, td, rm, sat, t1, t2, kc) = {
   if not(ztt_group_valid(ms1, G1, t1) & ztt_group_valid(ms2, G2, t2))
   then return Illegal_Instruction();
   let N = ztt_N();
-  let K = 2 ^ unsigned(kc) * N;
+  let K = 2 ^ unsigned(kc) * (ztt_RLEN() / 16);   /* RLEN = 16N except in Ztte */
   if not(ztt_acc_valid(md, td)) then return Illegal_Instruction();
 
   if ztt_is_int(td) then {
@@ -160,7 +161,7 @@ Included in::
 |Minimum version
 |Lifecycle state
 
-|ext:zttc[] (<<ext:zttc>>)
+|ext:ztte[] (<<ext:ztte>>)
 |0.1
 |Draft
 
