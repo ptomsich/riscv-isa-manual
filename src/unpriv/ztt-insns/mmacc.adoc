@@ -84,6 +84,7 @@ Exceptions::
 [#norm:mmacc_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
 +
 * csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* _td_ is a floating-point datatype, and ext:f[] is not implemented, or csr:mstatus[fs] is Off, or V=1 and csr:vsstatus[fs] is Off.
 * The combination of _t1_, _t2_, and _td_ is not supported (<<ztt-mmacc-table>>, <<ztt-acc64-table>>), or names a reserved type code.
 * `kc` is greater than 5, or a source's _G_ is not 1, 2, or 4, is not valid for its datatype, or names a group that is not aligned (<<ztt-groups>>).
 * A source's _G_ is 2 or 4 and ext:zttg[] is not implemented.
@@ -102,6 +103,8 @@ mapping clause encdec64 = MMACC(md, ms1, ms2, td, rm, sat, t1, t2, kc)
 function clause execute MMACC(md, ms1, ms2, td, rm, sat, t1, t2, kc) = {
   /* Every check depends only on the encoding, R and frm. */
   if not(ztt_enabled()) then return Illegal_Instruction();
+  /* A floating-point datatype needs F and FS. */
+  if not(ztt_fp_enabled(td)) then return Illegal_Instruction();
   if not(ztt_mmacc_supported(t1, t2, td)) then return Illegal_Instruction();
   if unsigned(kc) > 5 then return Illegal_Instruction();
   /* G = 2^kc * w / 16; G < 1 would be a slot, which mmacc does not take. */

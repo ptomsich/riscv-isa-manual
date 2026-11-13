@@ -736,7 +736,7 @@ A `psm` = 1 reduction that takes C~__i__,__j__~ has no counterpart in ext:zvvmm[
 === Exception Handling
 
 [#norm:Ztt_exc_precise]#Ztt instructions raise exceptions precisely: when an exception is taken on a Ztt instruction, all older instructions have completed, and no younger instruction has changed architectural state.#
-[#norm:Ztt_exc_decode]#Apart from exceptions raised in fetching them and breakpoints, Ztt instructions other than loads and stores raise no exceptions other than illegal-instruction exceptions, which depend only on the instruction, on the extensions implemented and the ratio of RLEN to _N_, on csr:mstatus[ts], csr:vsstatus[ts], and csr:frm[], and on XLEN.#
+[#norm:Ztt_exc_decode]#Apart from exceptions raised in fetching them and breakpoints, Ztt instructions other than loads and stores raise no exceptions other than illegal-instruction exceptions, which depend only on the instruction, on the extensions implemented and the ratio of RLEN to _N_, on the context-status fields csr::[ts] and csr::[fs] of csr:mstatus[] and csr:vsstatus[], on csr:frm[], and on XLEN.#
 
 NOTE: An implementation can therefore decide at decode whether such an instruction raises an exception, and dispatch it to a matrix unit without waiting for its completion.
 
@@ -767,11 +767,14 @@ Restarting a store rewrites the elements written before the exception with the s
 ext:zttc[] is thus a subset of ext:zttg[], and ext:zttg[] of ext:ztt[]: software written for one executes unchanged on an implementation of the next, for any _N_.
 Software for ext:ztte[] executes unchanged on ext:zttc[] if it supports RLEN = 16__N__: it reads the row length from csr:amenlenb[] and, where it converts between accumulator and matrix registers, selects the sequence for the ratio of RLEN to _N_ (<<ext:ztte>>).
 
-[#norm:Ztt_dep_f]#Matrix multiplies with FP32 accumulation depend on ext:f[], as those with FP64 accumulation depend on ext:d[] (<<ztt-ext-acc64>>).#
-
 NOTE: The subsets relate to ext:ztt[] as the embedded vector extensions relate to V: a smaller matrix unit implements fewer forms, and its software runs on a larger one.
 
 NOTE: Such software computes the same results on every implementation, except for floating-point matrix multiplies, whose roundings depend on RLEN and on implementation-defined parameters (<<ztt-matmul-numerics>>), and for insn:mexp2[], insn:mrec[], and insn:mrsqrt[], whose inexact results are implementation-defined (<<ztt-ops-mexp2>>).
+
+[#norm:Ztt_dep_f]#An instruction that names a floating-point datatype depends on ext:f[], and one that names FP64 also on ext:d[] (<<ztt-ext-acc64>>); it raises an illegal-instruction exception if the extension is not implemented.#
+
+NOTE: Such an instruction rounds by csr:frm[] and accrues its flags in csr:fflags[] (<<ztt-fcsr>>), which ext:f[] provides.
+It uses no `f` register, so the floating-point datatypes narrower than 32 bits depend on no other floating-point extension, and an implementation without ext:f[] has the integer datatypes only.
 
 [[ztt-naming]]
 ==== Naming Conventions

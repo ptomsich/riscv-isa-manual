@@ -61,6 +61,7 @@ Exceptions::
 [#norm:mmaccn_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
 +
 * csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* csr:mstatus[fs] is Off, or V=1 and csr:vsstatus[fs] is Off.
 * _t1_ and _t2_ are not both FP16 or BF16, or both TF32 or FP32, or _td_ is not FP32 (<<ztt-mmacc-table>>).
 * A source names a group that is not aligned (<<ztt-groups>>).
 * The sources are TF32 or FP32 and ext:zttg[] is not implemented.
@@ -78,6 +79,7 @@ mapping clause encdec64 = MMACCN(md, ms1, ms2, td, rm, sat, t1, t2)
 function clause execute MMACCN(md, ms1, ms2, td, rm, sat, t1, t2) = {
   /* Every check depends only on the encoding, R and frm. */
   if not(ztt_enabled()) then return Illegal_Instruction();
+  if not(ztt_fp_enabled(td)) then return Illegal_Instruction();   /* FS */
   if not(ztt_mmaccn_supported(t1, t2, td)) then return Illegal_Instruction();
   let G = ztt_type_width(t1) / 16;
   if G > 1 & not(currentlyEnabled(Ext_Zttg)) then return Illegal_Instruction();
