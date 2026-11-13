@@ -60,13 +60,14 @@ A context can thus move between units, and software sees the configuration only 
 ==== Accumulator Registers
 
 [#norm:Ztt_accreg]#Each accumulator register holds _N_ {times} _N_ 32-bit elements.#
-[#norm:Ztt_R]#There are _R_ = 8 accumulator registers.#
+[#norm:Ztt_R]#There are _R_ = 8 accumulator registers, or _R_ = 4 where ext:zttc[] is not implemented (<<ext:ztte>>).#
 
 NOTE: Attention keeps its output, _d_/__N__ accumulators for a head dimension _d_, in accumulators across all blocks of keys.
 Flash attention (<<ztt-example-flash>>) needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes, so eight accumulators hold an output of _d_ = 5__N__, or of _d_ = 6__N__ without the overlap.
 An attention that stores its scores in memory (<<ztt-example-attn-2p>>) holds nothing else in the pass that computes the output, so eight accumulators hold an output of _d_ = 8__N__, a head dimension of 128 at _N_ = 16.
 The backward pass (<<ztt-example-flash-bwd>>) holds two outputs, dK and dV, with S^T^ and dP^T^ in one pass, so eight accumulators hold _d_ = 3__N__; a larger head dimension recomputes the scores in further passes, and an implementation with a larger _N_ recomputes less.
 Fewer accumulators would slice the common head dimensions of 64 and 128 at small _N_, while more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
+ext:ztte[] alone has four, for a 2 {times} 2 block: it lacks the operations on accumulators that attention uses, and with short rows the accumulator registers are most of its state.
 
 [[ztt-mstatus]]
 ==== Ztt Context Status in csr:mstatus[]
@@ -756,7 +757,7 @@ Restarting a store rewrites the elements written before the exception with the s
 |===
 |Extension |Dependencies |Adds
 |ext:ztte[] |– |The instructions other than insn:mmaccn[] and the operations on accumulators, on operands of one matrix register or one slot
-|ext:zttc[] |ext:ztte[], with RLEN = 16__N__ |Operations on accumulators
+|ext:zttc[] |ext:ztte[], with RLEN = 16__N__ |Operations on accumulators, and the accumulator registers `acc4` to `acc7`
 |ext:zttg[] |ext:zttc[] |Operands of register groups
 |ext:zttn[] |ext:zttc[], ext:f[] |insn:mmaccn[]
 |ext:ztt[] |ext:zttg[], ext:zttn[] |–
@@ -785,6 +786,7 @@ ext:ztte[] serves the smallest matrix units: the rows of its matrix registers ma
 [#norm:Ztt_ext_e]#ext:ztte[] includes every instruction of this chapter except insn:mmaccn[], the elementwise operations on accumulators (<<ztt-ops-acc>>), and the reductions with an accumulator operand (<<ztt-ops-reduce>>), in the forms in which each matrix-register operand is one register or a slot (<<ztt-operands>>).
 A form in which an operand occupies a register group raises an illegal-instruction exception unless ext:zttg[] is implemented.#
 The instructions that name an accumulator register are then insn:mmacc[], insn:mzero[], insn:mcvt[], and the accumulator loads and stores.
+[#norm:Ztt_ext_e_acc]#ext:ztte[] has _R_ = 4 accumulator registers: an instruction that names `acc4` to `acc7` raises an illegal-instruction exception unless ext:zttc[] is implemented.#
 
 [#norm:Ztt_ext_e_rlen]#In ext:ztte[], RLEN is 16__N__, 8__N__, 4__N__, or 2__N__.#
 // OPEN: the permitted ratios of RLEN to N.
@@ -814,7 +816,7 @@ A result that goes to memory needs no such sequence: a conversion between accumu
 [[ext:zttc]]
 ==== ext:zttc[] Compact Attached Matrix Extension
 
-[#norm:Ztt_ext_c]#ext:zttc[] depends on ext:ztte[], requires RLEN = 16__N__, and adds the elementwise operations on accumulators (<<ztt-ops-acc>>) and the reductions with an accumulator operand (<<ztt-ops-reduce>>).#
+[#norm:Ztt_ext_c]#ext:zttc[] depends on ext:ztte[], requires RLEN = 16__N__, has _R_ = 8 accumulator registers, and adds the elementwise operations on accumulators (<<ztt-ops-acc>>) and the reductions with an accumulator operand (<<ztt-ops-reduce>>).#
 It thus includes every instruction of this chapter except insn:mmaccn[], on operands of one register or one slot.
 
 A matrix register then holds an _N_ {times} _N_ matrix of 16-bit elements and a slot has the shape of an accumulator register, so a conversion transfers a whole accumulator register, and the _K_ of a matrix multiply is from _N_ for 16-bit sources to 8__N__ for 2-bit sources (<<ztt-columns-table>>).
