@@ -17,26 +17,26 @@ Supervisor management of Ztt contexts is specified by ext:ssttctx[] in the privi
 ====
 Datatypes are a property of the instruction, not of the registers: every instruction names the datatypes of its operands, and the registers are untyped containers.
 An instruction therefore depends on no configuration state, its legality and the registers it accesses are known when it is decoded, and a compiler, disassembler, or debugger reads its semantics from the instruction alone.
-The tile side _N_ is the only implementation parameter visible to software, apart from the row length in ext:ztte[] (<<ext:ztte>>); like VLEN, it scales loop bounds and strides, but not register numbers or data layouts.
+The tile side _N_ and the row length RLEN are the only implementation parameters visible to software.
+Like VLEN, they scale loop bounds and strides, but not register numbers or data layouts, except that the conversion of an accumulator register takes one instruction for each of its 16__N__/RLEN parts (<<ext:ztte>>).
 ====
 
 [[ztt-params]]
 === Implementation-defined Constant Parameters
 
-[#norm:Ztt_N]#Each hart that implements a Ztt extension defines one parameter, the tile side _N_, which must be a multiple of 4.#
+[#norm:Ztt_N]#Each hart that implements a Ztt extension defines two parameters: the tile side _N_, which must be a multiple of 4, and the row length RLEN, in bits.#
 // OPEN (decision 17): the minimum N.
+[#norm:Ztt_RLEN]#RLEN is 16__N__, except that ext:ztte[] permits shorter rows (<<ext:ztte>>); it is a multiple of 64, so that a row holds a whole number of elements of every width.#
 
-_N_ sets the number of elements a register holds and the inner dimension of a matrix multiply.
-It does not change which registers an operand occupies.
+_N_ is the number of rows of a matrix register and the side of an accumulator register.
+RLEN is the length of a matrix-register row: it sets the number of elements a register holds and the inner dimension of a matrix multiply.
+Neither changes which registers an operand occupies.
 
-[#norm:Ztt_RLEN]#A row of a matrix register is RLEN bits long, where RLEN = 16__N__, except that ext:ztte[] permits shorter rows.#
-This chapter describes RLEN = 16__N__; <<ext:ztte>> lists what changes for shorter rows.
+NOTE: A row of _N_ or of RLEN/16 elements is then a whole number of bytes also for packed 6-bit elements (four in three bytes) and 2-bit elements (four per byte).
 
-NOTE: A row of packed 6-bit elements (four in three bytes) or of 2-bit elements (four per byte) is a whole number of bytes only when _N_ is a multiple of 4.
+Ztt supports binary code that executes on harts with different values of _N_ and RLEN, provided the harts support the datatypes and instructions it uses (<<ztt-extensions>>).
 
-Ztt supports binary code that executes on harts with different values of _N_, provided the harts support the datatypes and instructions it uses.
-
-NOTE: Thread contexts with live Ztt state cannot be migrated between harts with different values of _N_.
+NOTE: Thread contexts with live Ztt state cannot be migrated between harts with different values of _N_ or RLEN.
 
 [[ztt-model]]
 === Attached Matrix Programmer's Model
@@ -45,7 +45,7 @@ NOTE: Thread contexts with live Ztt state cannot be migrated between harts with 
 A matrix multiply reads its operands from matrix registers and accumulates into an accumulator register; the other operations read and write matrix registers.
 
 NOTE: The state is architecturally per hart, but a matrix unit may hold several contexts: one context for one hart, several contexts for one hart, such as for an interactive and a real-time task, or contexts for several harts.
-Harts that share a unit have the same _N_.
+Harts that share a unit have the same _N_ and RLEN.
 A context is only register contents, as no configuration state exists (<<ztt-datatypes>>); only loads and stores raise exceptions other than illegal-instruction exceptions, which are decided at decode (<<ztt-exceptions>>); a unit may access memory through its own path (<<ztt-memory-model>>); and register images do not depend on internal storage (<<ztt-register-images>>).
 A context can thus move between units, and software sees the configuration only through performance.
 <<ext:ssttctx>> specifies how contexts are bound to harts.
@@ -53,7 +53,7 @@ A context can thus move between units, and software sees the configuration only 
 [[ztt-mregs]]
 ==== Matrix Registers
 
-[#norm:Ztt_mreg]#Each matrix register holds _N_ {times} _N_ 16-bit elements.#
+[#norm:Ztt_mreg]#Each matrix register holds _N_ rows of RLEN bits: _N_ {times} _N_ 16-bit elements when RLEN = 16__N__.#
 <<ztt-operands>> describes how operands of other widths occupy matrix registers.
 
 [[ztt-accregs]]
@@ -245,6 +245,7 @@ The datatypes of an instruction's operands are given by operand specifiers:
 In assembly, a datatype follows its register name, separated by a dot, as in `acc2.fp32`; the rounding mode and `sat`, when given, are trailing operands, as in F, and an omitted rounding mode is DYN for floating-point datatypes.
 A matrix-register operand that occupies a group of _G_ registers (<<ztt-groups>>) is written with the suffix ``x``__G__, as in `m4x2.int8`, also where the datatype requires the group, as in `m12x2.fp32`; an operand in one register has no suffix.
 A slot operand (<<ztt-slots>>) is written with its slot index in brackets after the register name, as in `m4[1].e4m3`, also for slot 0.
+A part of an accumulator register (<<ztt-ops-mcvt>>) is written likewise, as in `acc0[3].fp32`; its index may be omitted when it is 0.
 An assembler rejects operands whose numbers of columns differ (<<ztt-enc-columns>>).
 [#norm:Ztt_spec_rsv]#A specifier field value that the operation does not use, or that is reserved for the named datatype, raises an illegal-instruction exception.#
 
@@ -299,9 +300,9 @@ A matrix-register operand is a matrix of _N_ rows that occupies part of a matrix
 [%autowidth,float="center",align="center",cols="<,<,<,<",options="header"]
 |===
 |Operand |Registers |Columns |In assembly
-|Slot (<<ztt-slots>>), for _w_ < 16 |_w_/16 of one |_N_ |`m4[1]`
-|Register (<<ztt-mreg-layout>>) |1 |16__N__/__w__ |`m4`
-|Register group (<<ztt-groups>>) |2 or 4 |16__GN__/__w__ |`m4x2`
+|Slot (<<ztt-slots>>), for _w_ < 16 |_w_/16 of one |RLEN/16 |`m4[1]`
+|Register (<<ztt-mreg-layout>>) |1 |RLEN/__w__ |`m4`
+|Register group (<<ztt-groups>>) |2 or 4 |_G_{nbsp}{times}{nbsp}RLEN/__w__ |`m4x2`
 |===
 
 [#norm:Ztt_G]#_G_ denotes the number of matrix registers that an operand occupies: 1 for a single register, 2 or 4 for a register group, and the fraction _w_/16 for a slot.#
@@ -310,21 +311,21 @@ Which of the three an operand is follows from the instruction and its datatypes 
 [[ztt-mreg-layout]]
 ==== Matrix Registers
 
-[#norm:Ztt_mreg_rows]#A matrix register holds _N_ rows of 2__N__ bytes.#
-[#norm:Ztt_mreg_operand]#An operand of element width _w_ held in one matrix register is an _N_ {times} 16__N__/__w__ matrix in row-major order: element (_r_, _c_) occupies bits _w_ {times} _c_ + _w_ − 1 to _w_ {times} _c_ of row _r_, numbering the bits of a row from bit 0 of its first byte.#
+[#norm:Ztt_mreg_rows]#A matrix register holds _N_ rows of RLEN/8 bytes.#
+[#norm:Ztt_mreg_operand]#An operand of element width _w_ held in one matrix register is an _N_ {times} RLEN/__w__ matrix in row-major order: element (_r_, _c_) occupies bits _w_ {times} _c_ + _w_ − 1 to _w_ {times} _c_ of row _r_, numbering the bits of a row from bit 0 of its first byte.#
 The element width of each datatype is given in <<ztt-type-code-table>>.
 
 [[ztt-columns-table]]
 .Columns per matrix register.
-[%autowidth,float="center",align="center",cols=">,>",options="header"]
+[%autowidth,float="center",align="center",cols=">,>,>",options="header"]
 |===
-|Element width |Columns
-|2 bits |8__N__
-|4 bits |4__N__
-|8 bits |2__N__
-|16 bits |_N_
-|32 bits |_N_/2
-|64 bits |_N_/4
+|Element width |Columns |With RLEN = 16__N__
+|2 bits |RLEN/2 |8__N__
+|4 bits |RLEN/4 |4__N__
+|8 bits |RLEN/8 |2__N__
+|16 bits |RLEN/16 |_N_
+|32 bits |RLEN/32 |_N_/2
+|64 bits |RLEN/64 |_N_/4
 |===
 
 NOTE: Elements are contiguous along each row, as in the input tiles of ext:zvvmm[], so a row-major matrix, or the transpose of a column-major one, loads without rearrangement.
@@ -332,32 +333,32 @@ NOTE: Elements are contiguous along each row, as in the input tiles of ext:zvvmm
 [[ztt-slots]]
 ==== Slots
 
-A slot is a part of a matrix register that holds one _N_ {times} _N_ matrix of elements narrower than 16 bits; a register of 8-bit elements, for example, consists of two slots side by side.
+A slot is a part of a matrix register that holds one matrix of elements narrower than 16 bits, with as many columns as the register has 16-bit elements in a row; a register of 8-bit elements, for example, consists of two slots side by side.
 
-[#norm:Ztt_slots]#For an element width _w_ < 16, columns _sN_ to (__s__ + 1)__N__ − 1 form slot _s_ of the register, an _N_ {times} _N_ matrix; a register has 16/__w__ slots.#
-Slot _s_ occupies bytes _swN_/8 to (__s__ + 1)__wN__/8 − 1 of each row:
+[#norm:Ztt_slots]#For an element width _w_ < 16, columns _s_{nbsp}{times}{nbsp}RLEN/16 to (__s__ + 1){nbsp}{times}{nbsp}RLEN/16 − 1 form slot _s_ of the register, an _N_ {times} RLEN/16 matrix; a register has 16/__w__ slots.#
+Each slot occupies _w_/16 of a row, and slot 0 begins at byte 0:
 
 [[ztt-slots-table]]
 .Slots in a row of a matrix register, by slot index.
 [width="60%",float="center",align="center",cols="3,8*^1",options="header"]
 |===
-|Element width 8+^|Bytes 0 to 2__N__ − 1 of a row
+|Element width 8+^|Bytes 0 to RLEN/8 − 1 of a row
 |8 bits 4+|0 4+|1
 |4 bits 2+|0 2+|1 2+|2 2+|3
 |2 bits |0 |1 |2 |3 |4 |5 |6 |7
 |===
 
-A slot has the shape of an accumulator register, and is the matrix-register operand of an instruction whose other operand is an accumulator register, such as a conversion (<<ztt-ops-mcvt>>).
+A slot is the matrix-register operand narrower than 16 bits of an instruction whose other operand is an accumulator register, such as a conversion (<<ztt-ops-mcvt>>); with RLEN = 16__N__, it has the shape of an accumulator register.
 An instruction takes a slot only where it encodes a slot index (<<ztt-enc-columns>>).
 
-NOTE: An _N_ {times} _N_ matrix written into slot _s_ forms columns _sN_ to (__s__ + 1)__N__ − 1 of the operand that the register holds, so the result of one matrix multiply feeds the next as a source without a transpose.
+NOTE: Matrices written into the slots of a register lie side by side in the operand that the register holds, so the result of one matrix multiply feeds the next as a source without a transpose.
 
 [[ztt-groups]]
 ==== Register Groups
 
 [#norm:Ztt_group]#An operand may occupy a group of _G_ = 2 or 4 consecutive matrix registers, the first of which has a register number that is a multiple of _G_.
-Register _j_ of the group holds columns _j_{nbsp}{times}{nbsp}16__N__/__w__ to (__j__ + 1){nbsp}{times}{nbsp}16__N__/__w__ − 1, so the operand is an _N_ {times} 16__GN__/__w__ matrix.#
-[#norm:Ztt_group_size]#An _N_ {times} _N_ matrix operand of element width _w_ > 16 occupies _G_ = _w_/16 registers.
+Register _j_ of the group holds columns _j_{nbsp}{times}{nbsp}RLEN/__w__ to (__j__ + 1){nbsp}{times}{nbsp}RLEN/__w__ − 1, so the operand is an _N_ {times} _G_{nbsp}{times}{nbsp}RLEN/__w__ matrix.#
+[#norm:Ztt_group_size]#An operand of RLEN/16 columns and element width _w_ > 16 occupies _G_ = _w_/16 registers.
 A matrix multiply may use a larger _G_ for its wider source (<<ztt-ops>>).
 Elementwise operations on matrix registers take no groups (<<ztt-ops-elementwise>>).
 No operand occupies more than four registers.#
@@ -397,13 +398,13 @@ Only the 64-bit accumulation extensions (<<ztt-ext-acc64>>) define 64-bit accumu
 [[ztt-register-images]]
 ==== Whole-Register Images
 
-[#norm:Ztt_mreg_image]#The image of a matrix register is its 2__N__^2^ bytes, row 0 first.#
+[#norm:Ztt_mreg_image]#The image of a matrix register is its _N_{nbsp}{times}{nbsp}RLEN/8 bytes, row 0 first.#
 [#norm:Ztt_acc_image]#The image of an accumulator register is its _N_^2^ 32-bit elements in row-major order, each in little-endian byte order.#
 [#norm:Ztt_image_arch]#Images are independent of how an implementation stores registers internally; whole-register loads and stores transfer them unchanged.#
 
 The image of each register of an accumulator pair is therefore its _N_ {times} _N_/2 64-bit elements in row-major order, each in little-endian byte order.
 
-NOTE: The images are architectural so that debuggers, and contexts migrated between harts with the same _N_, observe the same bytes on every implementation.
+NOTE: The images are architectural so that debuggers, and contexts migrated between harts with the same _N_ and RLEN, observe the same bytes on every implementation.
 
 [[ztt-encoding]]
 === Attached Matrix Instruction Formats
@@ -493,7 +494,8 @@ The first word is laid out as an R-type instruction, with the destination and so
 ], config:{lanes: 2, hspace: 1024}}
 ....
 
-[#norm:Ztt_enc64_cvt]#The conversion format, `fmt` = 010, holds `kc` in bits 60:58, the slot index `sd` of the destination in bits 63:61, and the slot index `s1` of the source in bits 55:53; bits 24:20, 38:37, and 57:56 are reserved.#
+[#norm:Ztt_enc64_cvt]#The conversion format, `fmt` = 010, holds `kc` in bits 60:58, the index `sd` of the destination in bits 63:61, and the index `s1` of the source in bits 55:53; bits 24:20, 38:37, and 57:56 are reserved.#
+An index selects a slot of a matrix register (<<ztt-slots>>) or a part of an accumulator register (<<ztt-ops-mcvt>>).
 `op` selects the register classes of the destination and the source.
 
 [[ztt-enc64-cvt-fig]]
@@ -526,12 +528,12 @@ The first word is laid out as an R-type instruction, with the destination and so
 ==== Operand Columns
 
 [#norm:Ztt_cols_same]#All matrix-register operands of an instruction have the same number of columns, _C_.#
-[#norm:Ztt_cols_kc]#Matrix multiplies and conversions encode _C_ = 2^`kc`^{nbsp}{times}{nbsp}__N__ in a 3-bit field `kc`; the values 6 and 7 are reserved.
+[#norm:Ztt_cols_kc]#Matrix multiplies and conversions encode _C_ = 2^`kc`^{nbsp}{times}{nbsp}RLEN/16 in a 3-bit field `kc`; the values 6 and 7 are reserved.
 An operand of element width _w_ then occupies _G_ = 2^`kc`^{nbsp}{times}{nbsp}__w__/16 registers.#
-[#norm:Ztt_cols_g]#An operand with _G_ < 1 is a slot of a register (<<ztt-slots>>), and is valid only where _C_ = _N_ and the instruction encodes a slot index.
+[#norm:Ztt_cols_g]#An operand with _G_ < 1 is a slot of a register (<<ztt-slots>>), and is valid only where _C_ = RLEN/16 and the instruction encodes a slot index.
 An instruction for which an operand's _G_ is otherwise less than 1, is greater than 4, or is not valid for its datatype (<<ztt-groups>>) raises an illegal-instruction exception.#
 
-_G_ does not depend on _N_, so the registers an instruction accesses follow from its register fields, `kc`, and the element widths of its datatypes.
+_G_ depends on neither _N_ nor RLEN, so the registers an instruction accesses follow from its register fields, `kc`, and the element widths of its datatypes.
 The column field applies to the instruction groups as follows:
 
 [%autowidth,float="center",align="center",cols="<,<",options="header"]
@@ -539,8 +541,8 @@ The column field applies to the instruction groups as follows:
 |Instructions |Column field
 |Matrix multiplies |_C_ is _K_; each source occupies the group that holds _K_ columns of its datatype.
 |Elementwise operations, compares, and bitwise operations on matrix registers |Each operand is one register; no column field.
-|Conversions |_C_ as encoded, and _N_ when an operand is an accumulator register; with _C_ = _N_, an operand narrower than 16 bits is a slot.
-|Other operations with an accumulator operand |_C_ is _N_, the columns of an accumulator; an operand narrower than 16 bits is a slot. No column field.
+|Conversions |_C_ as encoded, and RLEN/16 between an accumulator register, converted in parts of RLEN/16 columns, and a matrix-register operand; with _C_ = RLEN/16, an operand narrower than 16 bits is a slot.
+|Reductions, and elementwise operations with an accumulator operand |_C_ is RLEN/16, which is _N_ wherever an operand is an accumulator register (<<ext:zttc>>); an operand narrower than 16 bits is a slot. No column field.
 |Loads and stores |A single matrix-register operand: the 32-bit forms encode its group size _G_ directly, as log~2~ _G_ in 2 bits.
 |===
 
@@ -638,7 +640,7 @@ The counts also tell an implementation which elements are zero; the product of a
 [[ztt-memory-whole]]
 ==== Whole-Register Forms
 
-[#norm:Ztt_ls_whole]#insn:mls.1r[] and insn:mss.1r[] transfer the image of one matrix register, 2__N__^2^ bytes, between the register and consecutive bytes starting at the address in `rs1`.
+[#norm:Ztt_ls_whole]#insn:mls.1r[] and insn:mss.1r[] transfer the image of one matrix register, _N_{nbsp}{times}{nbsp}RLEN/8 bytes, between the register and consecutive bytes starting at the address in `rs1`.
 insn:mla.1r[] and insn:msa.1r[] do the same for the image of an accumulator register, 4__N__^2^ bytes.#
 
 [[ztt-memory-alignment]]
@@ -697,10 +699,10 @@ Taking a trap and executing an xRET instruction do not order the streams, so a h
 A floating-point matrix multiply updates element (_i_, _j_) of C with the _K_ products of element (_i_, _k_) of A and element (_j_, _k_) of B.
 
 [#norm:Ztt_num_sdp]#Consecutive products form sub-dot-products of _W_ products, where _W_ is 16 divided by the larger source element width, or 1 when that width is 16 bits or more.#
-[#norm:Ztt_num_steps]#Consecutive sub-dot-products form steps of _N_ sub-dot-products.
+[#norm:Ztt_num_steps]#Consecutive sub-dot-products form steps of RLEN/16 sub-dot-products.
 The result is that of applying the steps one at a time, in increasing order of _k_.#
 
-[#norm:Ztt_num_group]#Within a step, the sub-dot-products are partitioned into consecutive groups of _P_, where _P_ is an implementation-defined power of two that divides _N_.
+[#norm:Ztt_num_group]#Within a step, the sub-dot-products are partitioned into consecutive groups of _P_, where _P_ is an implementation-defined power of two that divides RLEN/16.
 Each group is reduced to a partial sum _S_ according to an implementation-defined parameter `psm`:#
 
 * [#norm:Ztt_num_psm0]#If `psm` = 0, _S_ is exact.#
@@ -733,7 +735,7 @@ A `psm` = 1 reduction that takes C~__i__,__j__~ has no counterpart in ext:zvvmm[
 === Exception Handling
 
 [#norm:Ztt_exc_precise]#Ztt instructions raise exceptions precisely: when an exception is taken on a Ztt instruction, all older instructions have completed, and no younger instruction has changed architectural state.#
-[#norm:Ztt_exc_decode]#Apart from exceptions raised in fetching them and breakpoints, Ztt instructions other than loads and stores raise no exceptions other than illegal-instruction exceptions, which depend only on the instruction, on csr:mstatus[ts], csr:vsstatus[ts], and csr:frm[], and on XLEN.#
+[#norm:Ztt_exc_decode]#Apart from exceptions raised in fetching them and breakpoints, Ztt instructions other than loads and stores raise no exceptions other than illegal-instruction exceptions, which depend only on the instruction, on the extensions implemented and the ratio of RLEN to _N_, on csr:mstatus[ts], csr:vsstatus[ts], and csr:frm[], and on XLEN.#
 
 NOTE: An implementation can therefore decide at decode whether such an instruction raises an exception, and dispatch it to a matrix unit without waiting for its completion.
 
@@ -760,13 +762,15 @@ Restarting a store rewrites the elements written before the exception with the s
 |ext:ztt[] |ext:zttg[], ext:zttn[] |–
 |===
 
-[#norm:Ztt_ext_subset]#An instruction has the same encoding and behavior in every extension that includes it.#
+[#norm:Ztt_ext_subset]#An instruction has the same encoding in every extension that includes it, and the same behavior for a given _N_ and RLEN.#
 ext:zttc[] is thus a subset of ext:zttg[], and ext:zttg[] of ext:ztt[]: software written for one executes unchanged on an implementation of the next, for any _N_.
-Software for ext:ztte[] executes unchanged on ext:zttc[] if it reads the row length from csr:amenlenb[] (<<ext:ztte>>).
+Software for ext:ztte[] executes unchanged on ext:zttc[] if it supports RLEN = 16__N__: it reads the row length from csr:amenlenb[] and, where it converts between accumulator and matrix registers, selects the sequence for the ratio of RLEN to _N_ (<<ext:ztte>>).
 
 [#norm:Ztt_dep_f]#Matrix multiplies with FP32 accumulation depend on ext:f[], as those with FP64 accumulation depend on ext:d[] (<<ztt-ext-acc64>>).#
 
 NOTE: The subsets relate to ext:ztt[] as the embedded vector extensions relate to V: a smaller matrix unit implements fewer forms, and its software runs on a larger one.
+
+NOTE: Such software computes the same results on every implementation, except for floating-point matrix multiplies, whose roundings depend on RLEN and on implementation-defined parameters (<<ztt-matmul-numerics>>), and for insn:mexp2[], insn:mrec[], and insn:mrsqrt[], whose inexact results are implementation-defined (<<ztt-ops-mexp2>>).
 
 [[ztt-naming]]
 ==== Naming Conventions
@@ -782,31 +786,12 @@ ext:ztte[] serves the smallest matrix units: the rows of its matrix registers ma
 A form in which an operand occupies a register group raises an illegal-instruction exception unless ext:zttg[] is implemented.#
 The instructions that name an accumulator register are then insn:mmacc[], insn:mzero[], insn:mcvt[], and the accumulator loads and stores.
 
-[#norm:Ztt_ext_e_rlen]#In ext:ztte[], RLEN is 16__N__, 8__N__, 4__N__, or 2__N__, and a multiple of 64, so that a row holds a whole number of elements of every width.#
+[#norm:Ztt_ext_e_rlen]#In ext:ztte[], RLEN is 16__N__, 8__N__, 4__N__, or 2__N__.#
 // OPEN: the permitted ratios of RLEN to N.
-RLEN/16 then takes the place of _N_ as the number of 16-bit columns of a matrix register:
-
-[[ztt-rlen-table]]
-.Quantities that depend on the row length.
-[%autowidth,float="center",align="center",cols="<,<,<",options="header"]
-|===
-|Quantity |RLEN = 16__N__ |In general
-|Bytes of a matrix-register row (<<ztt-mreg-layout>>) |2__N__ |RLEN/8
-|Columns of a register of _w_-bit elements (<<ztt-columns-table>>) |16__N__/__w__ |RLEN/__w__
-|Columns of a slot (<<ztt-slots>>), and of the operands of a reduction (<<ztt-ops-reduce>>) |_N_ |RLEN/16
-|Operand columns _C_ (<<ztt-enc-columns>>) |2^`kc`^{nbsp}{times}{nbsp}__N__ |2^`kc`^{nbsp}{times}{nbsp}RLEN/16
-|Bytes of a matrix-register image (<<ztt-register-images>>) |2__N__^2^ |_N_{nbsp}{times}{nbsp}RLEN/8
-|Sub-dot-products of a step (<<ztt-matmul-numerics>>), which _P_ divides |_N_ |RLEN/16
-|===
-
-The number of rows, the 16/__w__ slots of a register, the _G_ of an operand, and the accumulator registers do not depend on RLEN.
+A shorter row reduces the state of the matrix registers and the _K_ of a matrix multiply in proportion, and leaves the _N_ {times} _N_ result of each instruction unchanged.
 Each source of a matrix multiply is one register, so ext:ztte[] provides the combinations of <<ztt-mmacc-table>> with sources of 16 bits and narrower, at the _K_ of one register: from RLEN/16 for 16-bit sources to RLEN/2 for 2-bit sources.
 
-[#norm:Ztt_ext_e_cvt]#In a conversion between an accumulator register and a matrix-register operand, the accumulator operand designates part _t_ of the register, its columns _t_{nbsp}{times}{nbsp}RLEN/16 to (__t__ + 1){nbsp}{times}{nbsp}RLEN/16 − 1, where the index _t_ is encoded in the slot-index field of that operand (<<ztt-encoding-64>>).
-An index of 16__N__/RLEN or more raises an illegal-instruction exception.
-Writing a part leaves the other columns of the accumulator register unchanged.#
-In assembly, the index follows the register name in brackets, as in `acc0[3].fp32`, and may be omitted when it is 0.
-A conversion between two accumulator registers converts all _N_ columns.
+A matrix-register operand then has fewer columns than an accumulator register, which converts in 16__N__/RLEN parts (<<ztt-ops-mcvt>>):
 // OPEN: forms that convert a whole register of elements narrower than 16 bits (kc > 0
 // with an accumulator operand), where it holds no more than N columns.
 
@@ -817,11 +802,14 @@ mcvt   m4[0].int8, acc0[1].int32, sat        # part 1 of acc0 into slot 0 of m4
 mcvt   acc0.int8, acc0.int32, sat            # all columns, in place, for an e8 accumulator store
 ----
 
-NOTE: A shorter row reduces the state of the matrix registers and the _K_ of a matrix multiply in proportion, and leaves the _N_ {times} _N_ result of each instruction unchanged.
-Software reads the row length from csr:amenlenb[] and _N_ from csr:amerows[], steps the inner dimension by the first, and converts an accumulator register in 16__N__/RLEN parts.
-With RLEN = 16__N__, the only part is the whole register, so such software executes unchanged on ext:zttc[]; software that assumes RLEN = 16__N__ does not execute correctly on shorter rows.
+[NOTE]
+====
+Software reads the row length from csr:amenlenb[] and _N_ from csr:amerows[], and steps the inner dimension by the row length.
 
-Where this chapter requires harts to have the same _N_, as for a shared matrix unit or a migrated context, they also have the same RLEN.
+The part indices, slot indices, and destination registers of a conversion are fixed in the code, so software that converts between accumulator and matrix registers has one sequence for each ratio of RLEN to _N_ that it supports.
+The sequence for RLEN = 16__N__ is the one that executes on ext:zttc[].
+A result that goes to memory needs no such sequence: a conversion between accumulator registers and an accumulator store do not depend on the ratio.
+====
 
 [[ext:zttc]]
 ==== ext:zttc[] Compact Attached Matrix Extension
@@ -1126,7 +1114,7 @@ mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon
 |===
 
 [#norm:Ztt_acc_madd_m]#When the second operand of insn:madd[] is a matrix-register operand, it designates a tile as for insn:mcvt[], and its datatype is one that converts exactly to the accumulator datatype; the sum is rounded once.#
-[#norm:Ztt_bcast]#A broadcast operand is a vector _v_ of _N_ elements taken from a matrix-register operand that designates a tile as for insn:mcvt[].
+[#norm:Ztt_bcast]#A broadcast operand is a vector _v_ taken from a matrix-register operand that designates a tile as for insn:mcvt[].
 In the row form, written with the suffix `.row`, _v_ is row 0 of the tile, and element (_i_, _j_) of the result uses _v_~__j__~; in the column form, written `.col`, _v_ is column 0, and element (_i_, _j_) uses _v_~__i__~.#
 
 NOTE: A load with _LD_ = 0 and a column reduction (<<ztt-ops-reduce>>) write a vector to every row, where the row form reads it; a transposing load with _LD_ = 0 and a row reduction write it to every column, where the column form reads it.
@@ -1170,7 +1158,7 @@ Rotates serve hashing, checksums, and the permutation of packed fields.
 [[ztt-ops-reduce]]
 ==== Reductions
 
-[#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of an _N_ {times} _N_ source to its largest or smallest element, combine it with one element of the destination, and write the result to every element of that row or column of the destination.
+[#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of a source of RLEN/16 columns to its largest or smallest element, combine it with one element of the destination, and write the result to every element of that row or column of the destination.
 In the row form, written `.row`, element (_i_, _j_) of the destination becomes the larger or smaller of element (_i_, 0) and the reduction of row _i_ of the source; in the column form, written `.col`, of element (0, _j_) and the reduction of column _j_.#
 [#norm:Ztt_red_operands]#The source is an accumulator register or a matrix-register operand that designates a tile as for insn:mcvt[].
 The destination is a matrix-register operand that designates a tile, or an accumulator register if the source is one, and both have one datatype.
@@ -1224,11 +1212,15 @@ Other reductions are composed from these instructions:
 [#norm:Ztt_mcvt]#insn:mcvt[] converts element (_r_, _c_) of its source from the source datatype to element (_r_, _c_) of its destination in the destination datatype.
 Its source and destination are each a matrix-register operand or an accumulator register; the four combinations have separate encodings.#
 
-[#norm:Ztt_mcvt_tile]#Both operands hold _C_ columns (<<ztt-enc-columns>>), and _C_ is _N_ when either is an accumulator register.
-A matrix-register operand of element width _w_ < 16 with _C_ = _N_ is slot _s_ of a register (<<ztt-slots>>).
+[#norm:Ztt_mcvt_tile]#Both operands hold _C_ columns (<<ztt-enc-columns>>), and _C_ is RLEN/16 when one is an accumulator register and the other a matrix-register operand.
+A matrix-register operand of element width _w_ < 16 with _C_ = RLEN/16 is slot _s_ of a register (<<ztt-slots>>).
 An accumulator operand designates an accumulator register, or an accumulator pair for a 64-bit datatype.#
-[#norm:Ztt_mcvt_slot]#A slot index of 16/__w__ or more, or a nonzero slot index for an operand that is not a slot, raises an illegal-instruction exception.#
-[#norm:Ztt_mcvt_merge]#Writing a slot leaves the other slots of the register unchanged.#
+[#norm:Ztt_mcvt_part]#An accumulator operand converted to or from a matrix-register operand is part _t_ of its register, columns _t_{nbsp}{times}{nbsp}RLEN/16 to (__t__ + 1){nbsp}{times}{nbsp}RLEN/16 − 1.
+A register has 16__N__/RLEN parts; with RLEN = 16__N__, the only part is the whole register.
+A conversion between two accumulator registers converts all _N_ columns.#
+[#norm:Ztt_mcvt_slot]#The slot index _s_ and the part index _t_ are encoded in the index field of their operand (<<ztt-encoding-64>>).
+A slot index of 16/__w__ or more, a part index of 16__N__/RLEN or more, or a nonzero index for any other operand, raises an illegal-instruction exception.#
+[#norm:Ztt_mcvt_merge]#Writing a slot or a part leaves the rest of the register unchanged.#
 [#norm:Ztt_mcvt_overlap]#The source is read in full before the destination is written, so the two may overlap.#
 
 [#norm:Ztt_mcvt_conv]#A result that is not exactly representable in the destination datatype is rounded as selected by `rm` (<<ztt-rounding>>) and saturated as selected by `sat` (<<ztt-saturation>>).
@@ -1276,7 +1268,7 @@ The pseudoinstruction insn:mmv[] copies registers without conversion, using inte
 [[ztt-ops-mmvxm]]
 ==== Moves Between Matrix and X Registers
 
-[#norm:Ztt_mmvxm]#insn:mmv.x.m[] copies element _k_ of a matrix register to X register `rd`, where _k_ is the value of X register `rs2` and element _k_ is element (⌊__k__/__C__⌋, _k_ mod _C_) of the register, with _C_ = 16__N__/__w__ (<<ztt-mreg-layout>>).
+[#norm:Ztt_mmvxm]#insn:mmv.x.m[] copies element _k_ of a matrix register to X register `rd`, where _k_ is the value of X register `rs2` and element _k_ is element (⌊__k__/__C__⌋, _k_ mod _C_) of the register, with _C_ = RLEN/__w__ (<<ztt-mreg-layout>>).
 The element width _w_, 8, 16, 32, or 64 bits, is given by the suffix `e8`, `e16`, `e32`, or `e64`; the element is sign-extended to XLEN bits.#
 [#norm:Ztt_mmvxm_range]#If _k_ is not less than _NC_, the number of elements in the register, `rd` is written with 0.#
 [#norm:Ztt_mmvmx]#insn:mmv.m.x[] writes the low _w_ bits of X register `rs1` to element _k_ of a matrix register, numbered as for insn:mmv.x.m[], where _k_ is the value of X register `rs2`, and leaves the other elements unchanged.
@@ -1302,7 +1294,7 @@ mmv.m.x.e32 m4, a1, t1                       # element t1 of m4 = a1
 
 [#norm:Ztt_mfill]#insn:mfill[] writes the low _w_ bits of X register `rs1` to every element of a matrix register, for an element width _w_ of 8, 16, 32, or 64 bits given by the suffix `e8`, `e16`, `e32`, or `e64`.#
 [#norm:Ztt_mid]#insn:mid.row[] and insn:mid.col[] write to element (_r_, _c_) of a matrix-register operand its row number _r_ or its column number _c_, modulo 2^__w__^, for an element width _w_ of 8, 16, 32, or 64 bits given by the suffix.
-The operand occupies a group of _G_ = 1, 2, or 4 registers (<<ztt-groups>>), and is an _N_ {times} 16__GN__/__w__ matrix.#
+The operand occupies a group of _G_ = 1, 2, or 4 registers (<<ztt-groups>>), and is an _N_ {times} _G_{nbsp}{times}{nbsp}RLEN/__w__ matrix.#
 [#norm:Ztt_const_rv32]#For XLEN = 32, insn:mfill[] with `e64` raises an illegal-instruction exception.#
 They are 32-bit instructions (<<ztt-encoding-32>>).
 

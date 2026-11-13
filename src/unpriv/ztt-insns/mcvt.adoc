@@ -17,7 +17,7 @@ insn:mcvt[_accd_._td_, _ms1_[_s1_\]._t1_[, _rm_\][, sat\]] +
 insn:mcvt[_accd_._td_, _accs_._t1_[, _rm_\][, sat\]]
 +
 ``x``__G__ is omitted for _G_ = 1, and the slot index is written for every slot operand, including `[0]`.
-An accumulator operand converted to or from a matrix-register operand takes an index, written as in `acc0[3]` and omitted when 0; only ext:ztte[] has indices other than 0 (<<ext:ztte>>).
+An accumulator operand converted to or from a matrix-register operand takes a part index, written as in `acc0[3]` and omitted when 0.
 
 Pseudoinstructions::
 insn:mmv[md,ms1] {rightarrow} insn:mcvt[md.uint16,ms1.uint16] +
@@ -75,14 +75,13 @@ Arguments::
 |===
 
 Column Field::
-[#norm:mcvt_kc]#`kc` gives _C_ = 2^`kc`^{nbsp}{times}{nbsp}__N__, the number of columns of both operands.
+[#norm:mcvt_kc]#`kc` gives _C_ = 2^`kc`^{nbsp}{times}{nbsp}RLEN/16, the number of columns of both operands.
 A matrix-register operand of element width _w_ occupies _G_ = 2^`kc`^{nbsp}{times}{nbsp}__w__/16 registers.#
 +
-* With an accumulator operand, _C_ = _N_ and `kc` is 0.
+* With an accumulator operand, `kc` is 0: _C_ is RLEN/16, the columns of the part that `sd` or `s1` of the accumulator operand selects, or _N_ between two accumulator registers.
 * With `kc` = 0, a matrix-register operand narrower than 16 bits is a slot (_G_ < 1), selected by `sd` or `s1`; wider operands occupy _w_/16 registers.
 * With `kc` > 0, both operands are matrix registers, and each _G_ is 1, 2, or 4.
-* With RLEN below 16__N__, RLEN/16 takes the place of _N_, and `sd` or `s1` of an accumulator operand selects the RLEN/16 columns converted to or from the matrix-register operand (<<ext:ztte>>).
-* `sd` and `s1` are otherwise 0 for an operand that is not a slot.
+* `sd` and `s1` are otherwise 0 for an operand that is neither a slot nor a part.
 +
 [source,asm]
 ----
@@ -96,7 +95,7 @@ In assembly, `kc` follows from the operands, which must hold the same number of 
 
 Description::
 [#norm:mcvt_op]#insn:mcvt[] converts each element of the source from _t1_ to _td_, as specified in <<ztt-ops-mcvt>>, rounding as selected by `rm` and saturating as selected by `sat`.#
-[#norm:mcvt_op_merge]#A slot destination leaves the other slots of its register unchanged.#
+[#norm:mcvt_op_merge]#A slot or part destination leaves the rest of its register unchanged.#
 [#norm:mcvt_op_overlap]#The source is read in full before the destination is written.#
 [#norm:mcvt_fflags]#Floating-point exception flags accrue in csr:fflags[].#
 +
@@ -149,7 +148,7 @@ function clause execute MCVT(cls, md, ms1, td, rm, sat, t1, kc, sd, s1) = {
   if rmd == None() then return Illegal_Instruction();
 
   let N = ztt_N();
-  /* RLEN = 16N except in Ztte; two accumulator registers convert all N columns. */
+  /* Two accumulator registers convert all N columns. */
   let C = if d_is_m | s_is_m then 2 ^ unsigned(kc) * (ztt_RLEN() / 16) else N;
   /* The source is read in full first, as the operands may overlap. */
   let x = ztt_read_operand(the(src), N, C);
@@ -157,7 +156,7 @@ function clause execute MCVT(cls, md, ms1, td, rm, sat, t1, kc, sd, s1) = {
   foreach (r from 0 to (N - 1)) {
     foreach (c from 0 to (C - 1)) {
       let (e, f) = ztt_convert(td, t1, ztt_element(x, r, c), the(rmd), sat);
-      ztt_write_element(the(dst), r, c, e);   /* a slot leaves the other slots unchanged */
+      ztt_write_element(the(dst), r, c, e);   /* a slot or part leaves the rest unchanged */
       flags = flags | f;
     }
   };
