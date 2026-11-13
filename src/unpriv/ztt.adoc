@@ -468,7 +468,7 @@ The first word is laid out as an R-type instruction, with the destination and so
 
 [#norm:Ztt_enc64_rsv]#A field that an instruction does not use is reserved and must be zero; an instruction in which it is not raises an illegal-instruction exception.#
 
-[#norm:Ztt_enc64_mm]#The matrix-multiply format, `fmt` = 001, holds the column field `kc` (<<ztt-enc-columns>>) in bits 60:58; bits 38:37 and 63:61 are reserved.#
+[#norm:Ztt_enc64_mm]#The matrix-multiply format, `fmt` = 001, holds the column field `kc` (<<ztt-enc-columns>>) in bits 60:58; bits 38:37 and 63:61 are reserved, except in insn:mmaccs[] (<<ztt-ext-mx>>).#
 
 [[ztt-enc64-mm-fig]]
 .Matrix-multiply format.
@@ -788,6 +788,7 @@ It uses no `f` register, so the floating-point datatypes narrower than 32 bits d
 ==== Naming Conventions
 
 Extensions that add matrix-multiply datatype combinations are named `Ztt` + _input type_ + _output type_ + `mm`, with the type tokens of ext:zvvmm[]; the output type is omitted when it equals the input type.
+As there, `x` before the input type denotes sources with a scale per block of 32 elements, and `xn` per block of 16 (<<ztt-ext-mx>>).
 
 [[ext:ztte]]
 ==== ext:ztte[] Embedded Attached Matrix Extension
@@ -864,7 +865,6 @@ Its FP16 and BF16 sources are single registers; its TF32 and FP32 sources are gr
 // - mixed-width matrix multiply: sources of different element widths, the narrower
 //   source using the smaller register group so that both have the same K; it
 //   depends on ext:zttg[];
-// - block-scaled matrix multiply (decision 14);
 // - quantization primitives (decision 15);
 // - row moves to and from V, requiring a vector extension (decision 16).
 
@@ -887,6 +887,83 @@ Implementing any of them adds accumulator pairs (<<ztt-acc-layout>>) and the `e6
 NOTE: The extensions are separate so that an implementation can provide FP64 matrix multiplication without 64-bit integer accumulation, or the reverse.
 Accumulator registers stay 32 bits wide, so an implementation of any of them keeps all _R_ accumulators for the other datatypes.
 
+[[ztt-ext-mx]]
+==== Block-Scaled Matrix-Multiply Extensions
+
+// OPEN: the instruction name and the `.b16` suffix; the widths of r1 and r2;
+// an instruction page for mmaccs; whether E2M3 and E3M2, for which ext:zvvmm[]
+// has no type token, belong to the `ofp8` extensions.
+
+A microscaling format cite:[ocp-mx] divides each row of a matrix into blocks of 32 elements and stores one scale per block: a power of two, held as an E8M0 value.
+The value of an element is its stored value multiplied by the scale of its block.
+Blocks of 16 elements are also in use.
+
+[#norm:Ztt_mx]#Each extension in <<ztt-mx-table>> adds insn:mmaccs[] for its datatypes and block size: an insn:mmacc[] (<<ztt-ops-mmacc>>) that multiplies the products of each block by the scales of that block in A and in B.#
+
+[[ztt-mx-table]]
+.Block-scaled matrix-multiply extensions.
+[%autowidth,float="center",align="center",cols="<,<,^,<,<",options="header"]
+|===
+|Extension |Dependencies |Block size |A and B |C
+|Zttxofp8fp32mm |ext:zttc[], ext:f[] |32 |E2M3, E3M2, E4M3, E5M2 |FP32
+|Zttxofp4fp32mm |ext:zttc[], ext:f[] |32 |E2M1 |FP32
+|Zttxnofp8fp32mm |Zttxofp8fp32mm |16 |E2M3, E3M2, E4M3, E5M2 |FP32
+|Zttxnofp4fp32mm |Zttxofp4fp32mm |16 |E2M1 |FP32
+|===
+
+[#norm:Ztt_mx_bs]#The field `bs` selects the block size: 32 columns if `bs` = 0, and 16 columns if `bs` = 1, which is written `mmaccs.b16` in assembly.#
+[#norm:Ztt_mx_blocks]#The _K_ columns of a source form consecutive blocks, the last of which is shorter if _K_ is not a multiple of the block size.#
+
+The scales are read from matrix registers that the instruction implies.
+[#norm:Ztt_mx_regs]#The field `ss` selects a pair of scale registers: `m0` for the scales of A and `m1` for those of B if `ss` = 0, and `m2` and `m3` if `ss` = 1.#
+In assembly, the four are written `sc0a`, `sc0b`, `sc1a`, and `sc1b`; they are matrix registers in every other respect.
+
+[#norm:Ztt_mx_layout]#A scale register holds E8M0 elements, and a row of it holds the scales of 32 consecutive columns of a source.
+Element _i_ of the row, for _i_ < _N_, is the scale of row _i_ of the source for those columns or, with blocks of 16, for the first 16 of them; element _N_ + _i_ is then the scale for the other 16.#
+[#norm:Ztt_mx_index]#The scales of a source occupy _B_ consecutive rows, where _B_ is _K_/32 rounded up, and the fields `r1`, for A, and `r2`, for B, select the first of them: columns 32__q__ to 32__q__ + 31 of A take their scales from row `r1` {times} _B_ + _q_, and those of B from row `r2` {times} _B_ + _q_.#
+[#norm:Ztt_mx_range]#An instruction that selects a row above _N_ − 1 raises an illegal-instruction exception.#
+
+[source,asm]
+----
+mls.1r      sc1a, (a4)                                      # scales of the next A operands
+mmaccs      acc0.fp32, m4.e4m3, m8.e4m3, sc0a[1], sc0b[2]   # ss = 0, r1 = 1, r2 = 2
+mmaccs.b16  acc1.fp32, m5.e4m3, m9.e4m3, sc0a[0], sc0b[3]   # blocks of 16
+----
+
+[#norm:Ztt_mx_scale]#The block scale of a block for C~__i__,__j__~ is the FP32 product, rounded as selected by `rm`, of the scale of the block in row _i_ of A and the scale of the block in row _j_ of B.#
+Each scale is exact in FP32; the product of two may overflow or underflow.
+
+[#norm:Ztt_mx_num]#C is computed as specified in <<ztt-matmul-numerics>>, with these changes:#
+
+* [#norm:Ztt_mx_group]#A group ends where a block ends, and may thus hold fewer than _P_ sub-dot-products; the disclosure of a `psm` = 1 reduction covers every group length that can occur.#
+* [#norm:Ztt_mx_scaled]#After it is treated according to `rnd` and before it is accumulated, _S_ is multiplied by the block scale: by an FP32 multiplication, rounded as selected by `rm`, if `rnd` is `rm` or `rto`, and exactly if `rnd` is `xct`.#
+* [#norm:Ztt_mx_red_c]#A reduction that takes C~__i__,__j__~ multiplies each product by the block scale, exactly, instead.#
+* [#norm:Ztt_mx_sat]#With `sat` = 1, an infinite block scale or scaled _S_ is replaced as an infinite result is (<<ztt-saturation>>).#
+* [#norm:Ztt_mx_nan]#If a scale of a block is `0xff`, a NaN, C~__i__,__j__~ is the canonical NaN, and the products of that block and of the later blocks raise no flags for it.#
+
+NOTE: With `sat` = 0, these are the rules of the block-scaled matrix multiplies of ext:zvvmm[] for an FP32 accumulator, so the results agree for the same (_P_, `psm`, `rnd`).
+
+[#norm:Ztt_mx_enc]#insn:mmaccs[] has the matrix-multiply format (<<ztt-enc64-mm-fig>>) with 000001 in bits 31:26, `bs` in bit 25, `ss` in bit 63, `r2` in bits 62:61, and `r1` in bits 38:37.#
+
+[NOTE]
+====
+The scales could be held in four places:
+
+* In registers of their own, which would add state, with its own loads and stores.
+* In the register of the source, which would then hold elements of two datatypes, and fewer than a block of the source.
+* In one matrix register for both sources, as ext:zvvmm[] holds them in `v0`.
+Each pair of A and B operands that are multiplied then needs a register of its own, built from the two arrays of scales.
+* In one matrix register for the A operands and one for the B operands, as here.
+
+A scale register is written by one load, and holds the scales of up to four operands, although a multiply reads at most 2__N__ bytes of a row.
+The scales of _a_ A operands and _b_ B operands serve the _a_ {times} _b_ products of a kernel.
+Such a kernel uses _a_ {times} _b_ accumulator registers, so with the eight of ext:zttc[] neither _a_ nor _b_ exceeds four unless the other is one.
+Because the registers are implied and a row is selected by two bits, the instruction fits the fields that insn:mmacc[] leaves unused.
+With two pairs, a kernel loads the scales of its next operands while its multiplies read those of the current ones.
+
+A row holds the scales of 32 columns for either block size, so that a source takes the same rows with blocks of 16 as with blocks of 32.
+====
+
 [[ztt-ops]]
 === Instruction Groups
 
@@ -905,6 +982,8 @@ Transposing loads supply A^T^ and B^T^ (<<ztt-memory-addressing>>).
 
 [#norm:Ztt_mmaccn]#insn:mmaccn[] computes C {leftarrow} C + A {times} B, where A and B are the _N_ {times} _N_ matrices held by their operands, of the 16-bit and 32-bit floating-point datatypes of <<ztt-mmacc-table>>.#
 It is provided by ext:zttn[] (<<ext:zttn>>).
+
+insn:mmaccs[] is the form of insn:mmacc[] for sources with a scale per block (<<ztt-ext-mx>>).
 
 [NOTE]
 ====
