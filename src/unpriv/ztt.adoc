@@ -748,7 +748,26 @@ A result depends only on the instruction and its operands, and is the same on ev
 [[ztt-arith-fp]]
 ==== Floating-Point Arithmetic
 
-// One rounding from the exact result; floating-point exceptions accrued in fflags; NaNs.
+// OPEN: whether a NaN of E5M2 with a mantissa of 01 is signaling; whether an infinite
+// result that is not an overflow raises a flag in a datatype without infinity.
+
+A floating-point operation, one that names a floating-point datatype, follows IEEE 754-2019 cite:[ieee754-2019] as F does, for every datatype of <<ztt-type-code-table>>.
+
+[#norm:Ztt_fp_model]#Each element of its result is the exact value of the operation on the values of its operands, rounded once to the destination datatype as selected by `rm` (<<ztt-rounding>>) and then saturated as selected by `sat` (<<ztt-saturation>>).#
+The matrix multiplies (<<ztt-matmul-numerics>>) and insn:mexp2[], insn:mrec[], and insn:mrsqrt[] (<<ztt-ops-mexp2>>) round as specified there, and are the only operations whose results depend on the implementation.
+
+[#norm:Ztt_fp_formats]#A datatype of <<ztt-fp-format-table>> is rounded to as a binary format with the precision and the exponent range of its fields.#
+[#norm:Ztt_fp_tiny]#Tininess is detected after rounding.#
+[#norm:Ztt_fp_rod]#ROD rounds a result that is not exactly representable to the adjacent representable value whose least-significant significand bit is 1, and a result beyond the largest finite value to that value.#
+
+[#norm:Ztt_fp_snan]#A NaN of FP16, BF16, TF32, FP32, or FP64 is signaling if the most-significant bit of its mantissa is 0, as in F; the NaNs of E4M3, E5M2, and E8M0 are quiet.#
+A TF32 element is read with its 13 least-significant mantissa bits as zero, so a NaN whose payload lies only in those bits is an infinity.
+
+[#norm:Ztt_fp_flags]#An instruction accrues in csr:fflags[] the bitwise OR of the flags raised for its elements (<<ztt-fcsr>>).#
+[#norm:Ztt_fp_inf_flags]#Replacing an infinite result (<<ztt-saturation>>) raises no flag of its own: the flags are those of the operation that produced the infinity.#
+
+NOTE: An instruction computes every element of its operands, as Ztt has no vector length, so elements that hold no data raise flags as the others do.
+A partial-tile load writes zero to them (<<ztt-memory-partial>>).
 
 [[ztt-matmul-numerics]]
 ==== Matrix-Multiply Numerics
