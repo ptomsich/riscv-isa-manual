@@ -733,7 +733,17 @@ Taking a trap and executing an xRET instruction do not order the streams, so a h
 [[ztt-arith-int]]
 ==== Integer Arithmetic
 
-// One rounding from the exact result to the destination type; wraparound and saturation.
+An integer operation, one whose source and destination datatypes are all integer datatypes, computes each element exactly and then fits it to the destination datatype.
+
+[#norm:Ztt_int_model]#Each element of its result is the exact value of the operation on the values of its operands, each read in the datatype named for it.
+Where that value is not an integer, it is rounded to one as selected by `rm` (<<ztt-rounding>>); it is then wrapped or saturated to the destination datatype as selected by `sat` (<<ztt-saturation>>).#
+Only insn:msmul[] and a right shift by insn:mldexp[] yield values that are rounded.
+
+No case needs a rule of its own: where an operation widens, a signed source is sign-extended and an unsigned one zero-extended, and insn:msmul[] of the most negative value by itself saturates.
+With `sat` = 0, a sum, difference, or product has the same bits for a signed and an unsigned destination datatype of one width, so INT32 and UINT32 name the same accumulation in insn:mmacc[].
+
+[#norm:Ztt_int_noflags]#Integer operations accrue no flags: neither an inexact nor a saturated result is reported.#
+A result depends only on the instruction and its operands, and is the same on every implementation; the sum of a matrix multiply is exact, so it does not depend on the order of its products.
 
 [[ztt-arith-fp]]
 ==== Floating-Point Arithmetic
@@ -1112,7 +1122,7 @@ Mixed widths fit the register model unchanged: the narrower source occupies the 
 [#norm:Ztt_ew_operands]#An elementwise operation applies to corresponding elements of matrix-register operands of one element width, each of which is one matrix register, or of accumulator registers as listed in <<ztt-acc-ops-table>>.
 A scalar operand, taken from an X register or from a 7-bit signed immediate in the instruction, applies to every element.#
 [#norm:Ztt_ew_scalar]#An X register supplies the encoding of a value of _w_ bits in its low _w_ bits; _w_ > XLEN is reserved.
-An immediate is a signed integer and is reserved for an operand of a floating-point datatype.#
+An immediate is sign-extended and supplies its low _w_ bits likewise; it is reserved for an operand of a floating-point datatype.#
 
 NOTE: Elementwise operations take no register groups (<<ztt-groups>>), so an _N_ {times} _N_ matrix of a 32-bit or 64-bit datatype in matrix registers takes two or four instructions.
 
