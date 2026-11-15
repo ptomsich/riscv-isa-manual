@@ -275,6 +275,7 @@ The floating-point encodings are those of <<norm:dyn_round_enc>>, with 101 assig
 [#norm:Ztt_rm_int_ext]#The integer encodings RMM, RTZ, and RUP round to nearest with ties away from zero, toward zero, and toward +{inf}, respectively.#
 
 NOTE: Integer RMM is the rounding of the requantization in common inference libraries, so a right shift by insn:mldexp[] can match them exactly.
+
 [#norm:Ztt_rm_dyn]#DYN selects the rounding mode in csr:frm[]; as in F, the behavior when csr:frm[] holds a reserved value is reserved.#
 [#norm:Ztt_rm_rod_int]#The floating-point encoding ROD is reserved when the destination datatype is an integer datatype.#
 
