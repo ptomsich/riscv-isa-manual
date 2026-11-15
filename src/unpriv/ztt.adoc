@@ -1722,27 +1722,28 @@ The third pass computes the exponentials again instead of loading them stored by
 [[ztt-example-flash]]
 ==== Example: Flash Attention
 
-The following code computes O = softmax(__s__ Q K^T^) V for a block of _N_ query rows in BF16, with a head dimension _d_ = 4__N__, in one pass over _L_ keys and values, as the forward pass of FlashAttention-2.
-For each block of _N_ keys, it raises the row maxima _m_, rescales the row sums _l_ and the output by α = 2^__a__^ for _a_ = __m__~old~ − __m__~new~, and adds the new block's contributions; it divides by _l_ once at the end.
+The following code computes O = softmax(__s__ Q K^T^) V for a block of up to _N_ query rows in BF16, with a head dimension _d_ = 4__N__, in one pass over _L_ keys and values, as the forward pass of FlashAttention-2.
+For each block of up to _N_ keys, it raises the row maxima _m_, rescales the row sums _l_ and the output by α = 2^__a__^ for _a_ = __m__~old~ − __m__~new~, and adds the new block's contributions; it divides by _l_ once at the end.
 The output stays in four accumulators, the scores use a fifth, and the row sums a sixth; α and 1/__l__ scale them as column broadcasts.
-A column broadcast reads only column 0 of its tile, so α is computed in the first register of m18x2 alone.
+A column broadcast reads only column 0 of its tile, so α and 1/__l__ are computed in the first register of their tiles alone.
+Partial-tile loads and stores (<<ztt-memory-partial>>) bound the query rows and the last block of keys; the scores of the keys past _L_, which the zero fill leaves at 0, are set to negative infinity.
 
 [source,asm]
 ----
 # a0: &Q[i][0]   a1: ldq   a2: &K[0][0]   a3: ldk   a4: &V[0][0]   a5: ldv
-# a6: &O[i][0]   a7: L, a multiple of N   s0: ldo   (leading dimensions in elements)
-# s1: s log2(e) in FP32, for the scale s of the scores
+# a6: &O[i][0]   a7: L > 0   s0: ldo   (leading dimensions in elements)
+# s1: s log2(e) in FP32, for the scale s of the scores   s2: query rows, at most N
 
+        csrr        t0, amerows         # N
         csrr        t1, amenlenb        # 2N
         mul         t2, t1, a3          # N rows of K
         mul         t3, t1, a5          # N rows of V
-        mul         t5, a7, a3
-        slli        t5, t5, 1
-        add         t5, a2, t5          # &K[L][0]
-        mls.st.e16  m0x4, (a0), a1      # Q: N rows, 4N columns
+        mls.st.e16  m0x4, (a0), a1, s2, x0      # Q: s2 rows, 4N columns
         li          t4, 0xff800000      # -infinity
-        mfill.e32   m16, t4
-        mfill.e32   m17, t4             # m16x2: running row maxima
+        mfill.e32   m26, t4
+        mfill.e32   m27, t4             # m26x2: -infinity
+        mmv         m16x2, m26x2        # m16x2: running row maxima
+        mid.col.e32 m24x2               # m24x2: column numbers
         li          t4, 0x3f800000      # 1.0
         mfill.e32   m20, t4
         mfill.e32   m21, t4             # m20x2: ones
@@ -1752,20 +1753,28 @@ A column broadcast reads only column 0 of its tile, so α is computed in the fir
         mzero       acc3                # acc0 to acc3: output
         mzero       acc5                # row sums
 
-1:      mls.st.e16  m4x4, (a2), a3      # N keys
+1:      mls.st.e16  m4x4, (a2), a3, a7, x0      # up to N keys
         add         a2, a2, t2
-        mls.tst.e16 m8, (a4), a5        # V^T: N columns of N values
+        mls.tst.e16 m8, (a4), a5, x0, a7        # V^T: N columns of up to N values
         add         t6, a4, t1
-        mls.tst.e16 m9, (t6), a5
+        mls.tst.e16 m9, (t6), a5, x0, a7
         add         t6, t6, t1
-        mls.tst.e16 m10, (t6), a5
+        mls.tst.e16 m10, (t6), a5, x0, a7
         add         t6, t6, t1
-        mls.tst.e16 m11, (t6), a5
+        mls.tst.e16 m11, (t6), a5, x0, a7
         add         a4, a4, t3
         mzero       acc4
         mmacc       acc4.fp32, m0x4.bf16, m4x4.bf16 # scores, K = 4N
         mmul        acc4.fp32, acc4.fp32, s1
-        mmv         m18, m16                        # old row maxima
+        bge         a7, t0, 2f                      # a full block of keys
+        mfill.e32   m28, a7
+        mfill.e32   m29, a7
+        mcmpge      m28.uint32, m24.uint32, m28.uint32  # c >= keys left
+        mcmpge      m29.uint32, m25.uint32, m29.uint32
+        mand        m28.uint32, m28.uint32, m26.uint32
+        mand        m29.uint32, m29.uint32, m27.uint32
+        madd        acc4.fp32, acc4.fp32, m28x2.fp32    # -infinity for the keys past L
+2:      mmv         m18, m16                        # old row maxima
         mredmax.row m16x2.fp32, acc4.fp32           # new row maxima
         mcvt        m12x2.fp32, acc4.fp32
         msub        m18.fp32, m18.fp32, m16.fp32
@@ -1785,11 +1794,11 @@ A column broadcast reads only column 0 of its tile, so α is computed in the fir
         mmacc       acc1.fp32, m22.bf16, m9.bf16
         mmacc       acc2.fp32, m22.bf16, m10.bf16
         mmacc       acc3.fp32, m22.bf16, m11.bf16
-        bne         a2, t5, 1b
+        sub         a7, a7, t0
+        bgtz        a7, 1b
 
         mcvt        m12x2.fp32, acc5.fp32
-        mrec        m12.fp32, m12.fp32
-        mrec        m13.fp32, m13.fp32
+        mrec        m12.fp32, m12.fp32              # 1/l in column 0
         mmul.col    acc0.fp32, acc0.fp32, m12x2.fp32   # O / l
         mmul.col    acc1.fp32, acc1.fp32, m12x2.fp32
         mmul.col    acc2.fp32, acc2.fp32, m12x2.fp32
@@ -1798,36 +1807,36 @@ A column broadcast reads only column 0 of its tile, so α is computed in the fir
         mcvt        acc1.bf16, acc1.fp32
         mcvt        acc2.bf16, acc2.fp32
         mcvt        acc3.bf16, acc3.fp32
-        msa.st.e16  acc0, (a6), s0      # O[i][0]
+        msa.st.e16  acc0, (a6), s0, s2, x0  # O[i][0], s2 rows
         add         a6, a6, t1
-        msa.st.e16  acc1, (a6), s0      # O[i][N]
+        msa.st.e16  acc1, (a6), s0, s2, x0  # O[i][N]
         add         a6, a6, t1
-        msa.st.e16  acc2, (a6), s0      # O[i][2N]
+        msa.st.e16  acc2, (a6), s0, s2, x0  # O[i][2N]
         add         a6, a6, t1
-        msa.st.e16  acc3, (a6), s0      # O[i][3N]
+        msa.st.e16  acc3, (a6), s0, s2, x0  # O[i][3N]
 ----
 
-Each block of keys takes six insn:mmacc[], one for the product Q K^T^, four for P V, and one for the row sums, five loads, and 17 other matrix instructions, using 20 matrix registers and six accumulators.
+Each block of keys takes six insn:mmacc[], one for the product Q K^T^, four for P V, and one for the row sums, five loads, and 17 other matrix instructions; a last block of fewer than _N_ keys takes seven more for its mask.
+The code uses 26 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
-For training, the forward pass also stores _m_ and 1/__l__ of each row from m16x2 and m12x2, with insn:mss.tst[] and _LD_ = 0, from which the backward pass (<<ztt-example-flash-bwd>>) recomputes P.
+For training, the forward pass also stores _m_ and 1/__l__ of each row from column 0 of m16x2 and m12x2, with insn:mss.tst[] and a column count of 1, from which the backward pass (<<ztt-example-flash-bwd>>) recomputes P.
 
 For causal attention, the last block of keys of a block of queries holds the keys at the queries' own positions, and query _r_ of the block attends to keys 0 to _r_ of it.
-The scores of that block are masked, before insn:mredmax.row[], by adding negative infinity above the diagonal; the mask is built once, while m16x2 holds negative infinity:
+The scores of that block are masked, before insn:mredmax.row[], by adding negative infinity above the diagonal; the mask is built once, from the column numbers in m24x2 and the negative infinity in m26x2:
 
 [source,asm]
 ----
-        mid.col.e32 m24x2
-        mid.row.e32 m26x2
-        mcmpgt      m24.uint32, m24.uint32, m26.uint32  # c > r
-        mcmpgt      m25.uint32, m25.uint32, m27.uint32
-        mand        m24.uint32, m24.uint32, m16.uint32  # -infinity above the diagonal
-        mand        m25.uint32, m25.uint32, m17.uint32
+        mid.row.e32 m30x2
+        mcmpgt      m30.uint32, m24.uint32, m30.uint32  # c > r
+        mcmpgt      m31.uint32, m25.uint32, m31.uint32
+        mand        m30.uint32, m30.uint32, m26.uint32  # -infinity above the diagonal
+        mand        m31.uint32, m31.uint32, m27.uint32
 
         # in the loop, for the last block of keys, after the scores are scaled:
-        madd        acc4.fp32, acc4.fp32, m24x2.fp32
+        madd        acc4.fp32, acc4.fp32, m30x2.fp32
 ----
 
-Every row keeps the score of its own position, so its maximum stays finite.
+Every row keeps the score of the block's first key, so its maximum stays finite.
 
 [[ztt-example-attn-2p]]
 ==== Example: Attention in Two Passes
