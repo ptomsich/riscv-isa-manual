@@ -8,7 +8,7 @@ It may be decoupled from the hart; <<ztt-memory-model>> specifies how its memory
 [#norm:Ztt_no_vstate]#The extensions do not depend on the vector extensions: they add no vector state and read none.#
 Their registers are separate from the vector registers and from those of ext:zvt[] (<<ztt-zvt>>).
 
-[#norm:Ztt_enc]#Instructions that name datatypes use the 64-bit encoding of ext:zl[]; the other instructions use 32-bit encodings in the OP-VE major opcode.#
+[#norm:Ztt_enc]#Instructions that name datatypes, and the partial-tile forms of the loads and stores, use the 64-bit encoding of ext:zl[]; the other instructions use 32-bit encodings in the OP-VE major opcode.#
 
 The family consists of ext:ztt[], subsets of it for smaller matrix units, and extensions that add datatype combinations (<<ztt-extensions>>).
 Supervisor management of Ztt contexts is specified by ext:ssttctx[] in the privileged architecture.
@@ -424,8 +424,8 @@ NOTE: The images are architectural so that debuggers, and contexts migrated betw
 [[ztt-encoding-64]]
 ==== 64-Bit Instructions
 
-[#norm:Ztt_enc64]#Typed instructions use the 64-bit instruction encoding of the long-instruction extension (Zl), shown in <<ztt-enc64-fig>>.#
-The first word is laid out as an R-type instruction, with the destination and source register numbers at their standard positions; the second word carries the operand specifiers.
+[#norm:Ztt_enc64]#Typed instructions and the partial-tile forms of the loads and stores use the 64-bit instruction encoding of the long-instruction extension (Zl), shown in <<ztt-enc64-fig>>.#
+The first word is laid out as an R-type instruction, with the destination and source register numbers at their standard positions; the second word carries the operand specifiers of a typed instruction.
 
 [[ztt-enc64-fig]]
 .64-bit typed instruction format.
@@ -527,6 +527,37 @@ An index selects a slot of a matrix register (<<ztt-slots>>) or a part of an acc
 ], config:{lanes: 2, hspace: 1024}}
 ....
 
+[#norm:Ztt_enc64_mem]#The memory format, `fmt` = 011, holds the partial-tile forms of the loads and stores (<<ztt-memory-partial>>), with the register transferred in `md`, the base address in `rs1`, the leading dimension in `rs2`, the row count in `rs3`, bits 52:48, and the column count in `rs4`, bits 57:53.
+Bits 43:41 hold the element-size code `es` (<<ztt-esize-table>>), and bits 40:39 hold `lg` = log~2~ _G_ for the group of a matrix-register operand; `lg` = 3 is reserved, as is a nonzero `lg` in an accumulator form.
+Bits 38:37, 47:44, and 63:58 are reserved.#
+[#norm:Ztt_enc64_mem_op]#In `op`, bit 25 is set for a store, bit 26 for a transposing form, and bit 27 for an accumulator form; bits 31:28 are zero.#
+
+[[ztt-enc64-mem-fig]]
+.Memory format.
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '011', attr: ['MEM'] },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 7, name: 'op' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 2, name: 'lg' },
+    { bits: 3, name: 'es' },
+    { bits: 4, name: '0000' },
+    { bits: 5, name: 'rs3' },
+    { bits: 5, name: 'rs4' },
+    { bits: 6, name: '000000' }
+], config:{lanes: 2, hspace: 1024}}
+....
+// OPEN: the 32-bit loads and stores are to use the same element-size codes, `lg`, and
+// operation bits.
+
 [[ztt-enc-columns]]
 ==== Operand Columns
 
@@ -546,7 +577,7 @@ The column field applies to the instruction groups as follows:
 |Elementwise operations, compares, and bitwise operations on matrix registers |Each operand is one register; no column field.
 |Conversions |_C_ as encoded, and RLEN/16 between an accumulator register, converted in parts of RLEN/16 columns, and a matrix-register operand; with _C_ = RLEN/16, an operand narrower than 16 bits is a slot.
 |Reductions, and elementwise operations with an accumulator operand |_C_ is RLEN/16, which is _N_ wherever an operand is an accumulator register (<<ext:zttc>>); an operand narrower than 16 bits is a slot. No column field.
-|Loads and stores |A single matrix-register operand: the 32-bit forms encode its group size _G_ directly, as log~2~ _G_ in 2 bits.
+|Loads and stores |A single matrix-register operand, whose group size _G_ is encoded directly, as log~2~ _G_ in 2 bits.
 |===
 
 [#norm:Ztt_cols_mixed]#In a matrix multiply whose sources differ in element width, both hold _K_ columns, so the narrower source occupies the smaller group.#
@@ -630,17 +661,19 @@ Their encodings are 32-bit (<<ztt-encoding-32>>), except for the partial-tile fo
 
 [[ztt-esize-table]]
 .Load and store element sizes.
-[%autowidth,float="center",align="center",cols="<,<,^,^",options="header"]
+[%autowidth,float="center",align="center",cols="<,^,<,^,^",options="header"]
 |===
-|Suffix |Element size |Matrix registers |Accumulator registers
-|`e2` |2 bits |yes |no
-|`e4` |4 bits |yes |yes
-|`p6` |6 bits, packed |yes |no
-|`e8` |8 bits |yes |yes
-|`e16` |16 bits |yes |yes
-|`e32` |32 bits |yes |yes
-|`e64` |64 bits |yes |pairs only
+|Suffix |Code |Element size |Matrix registers |Accumulator registers
+|`e2` |000 |2 bits |yes |no
+|`e4` |001 |4 bits |yes |yes
+|`e8` |010 |8 bits |yes |yes
+|`e16` |011 |16 bits |yes |yes
+|`e32` |100 |32 bits |yes |yes
+|`e64` |101 |64 bits |yes |pairs only
+|`p6` |110 |6 bits, packed |yes |no
 |===
+
+[#norm:Ztt_ls_esize_rsv]#The code 111 is reserved.#
 
 [#norm:Ztt_ls_p6]#`p6` transfers 6-bit elements stored four in three bytes in memory, element _k_ of a row occupying bits 6__k__ + 5 to 6__k__ of the row, numbering the bits of a row from bit 0 of its first byte; in a matrix register each element occupies an 8-bit container as in <<ztt-fp-formats>>.#
 [#norm:Ztt_ls_esize_reg]#The element size determines the shape of the operand matrix and the size of the register group, as for an operand of that element width.#
@@ -678,10 +711,25 @@ A row-major B of 2-, 4-, or 8-bit elements thus loads as B^T^ for insn:mmacc[], 
 [[ztt-memory-partial]]
 ==== Partial-Tile Forms
 
-[#norm:Ztt_ls_partial]#Each strided, transposing, and accumulator form has a partial-tile variant that also takes a row count and a column count from X registers.
-It transfers only the elements whose row index is below the row count and whose column index is below the column count; a count at least the number of rows or columns of the operand matrix selects all of them.#
+[#norm:Ztt_ls_partial]#Each strided, transposing, and accumulator form has a partial-tile variant that also takes a row count in X register `rs3` and a column count in X register `rs4`.
+It transfers only the elements of the operand matrix whose row index is below the row count and whose column index is below the column count.#
+[#norm:Ztt_ls_partial_count]#A count is the unsigned value of its register; a count of at least the number of rows or columns of the operand matrix selects all of them, as does `x0` as the count register.#
 [#norm:Ztt_ls_partial_load]#A partial-tile load writes zero to the elements it does not transfer.#
 [#norm:Ztt_ls_partial_store]#A partial-tile store does not access memory for the elements it does not transfer.#
+[#norm:Ztt_ls_partial_sub]#For elements narrower than 8 bits, a partial-tile store rounds its column count, or the row count of a transposing form, up to a multiple of 8/__w__, or of 4 for `p6`.#
+[#norm:Ztt_ls_partial_exc]#A partial-tile form raises no exception for an element it does not transfer.#
+
+In assembly, the counts follow the leading dimension, which is not omitted, with the row count first:
+
+[source,asm]
+----
+mls.st.e16  m4x4, (a2), a3, t0, x0     # rows below t0
+mls.tst.e16 m8, (a4), a5, x0, t0       # columns below t0
+mss.st.e32  m12x2, (a6), a7, t1, t2    # rows below t1 of columns below t2
+----
+
+NOTE: With a count of zero in a register other than `x0`, a load only zeroes its destination and a store has no effect.
+A store of elements narrower than 8 bits writes whole bytes, so it never reads memory to preserve part of one.
 
 NOTE: A partial-tile load pads an edge tile, or a short inner dimension, without a separate clearing step: if both sources of a matrix multiply are loaded with the same column count, the zero-filled columns contribute only +0 products.
 The counts also tell an implementation which elements are zero; the product of a zero element needs no significand multiply, only its sign and the handling of an infinite or NaN partner (<<ztt-matmul-numerics>>).
