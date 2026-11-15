@@ -1676,7 +1676,8 @@ The third pass computes the exponentials again instead of loading them stored by
 
 The following code computes O = softmax(__s__ Q K^T^) V for a block of _N_ query rows in BF16, with a head dimension _d_ = 4__N__, in one pass over _L_ keys and values, as the forward pass of FlashAttention-2.
 For each block of _N_ keys, it raises the row maxima _m_, rescales the row sums _l_ and the output by α = 2^__a__^ for _a_ = __m__~old~ − __m__~new~, and adds the new block's contributions; it divides by _l_ once at the end.
-The output stays in four accumulators, the scores use a fifth, and the row sums a sixth; α and 1/__l__, replicated along each row, scale them as column broadcasts.
+The output stays in four accumulators, the scores use a fifth, and the row sums a sixth; α and 1/__l__ scale them as column broadcasts.
+A column broadcast reads only column 0 of its tile, so α is computed in the first register of m18x2 alone.
 
 [source,asm]
 ----
@@ -1716,13 +1717,11 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         mzero       acc4
         mmacc       acc4.fp32, m0x4.bf16, m4x4.bf16 # scores, K = 4N
         mmul        acc4.fp32, acc4.fp32, s1
-        mmv         m18x2, m16x2                    # old row maxima
+        mmv         m18, m16                        # old row maxima
         mredmax.row m16x2.fp32, acc4.fp32           # new row maxima
         mcvt        m12x2.fp32, acc4.fp32
         msub        m18.fp32, m18.fp32, m16.fp32
-        msub        m19.fp32, m19.fp32, m17.fp32
-        mexp2       m18.fp32, m18.fp32              # alpha, 0 for the first block
-        mexp2       m19.fp32, m19.fp32
+        mexp2       m18.fp32, m18.fp32              # alpha in column 0, 0 for the first block
         msub        m12.fp32, m12.fp32, m16.fp32
         msub        m13.fp32, m13.fp32, m17.fp32
         mexp2       m12.fp32, m12.fp32              # P
@@ -1760,7 +1759,7 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         msa.st.e16  acc3, (a6), s0      # O[i][3N]
 ----
 
-Each block of keys takes six insn:mmacc[], one for the product Q K^T^, four for P V, and one for the row sums, five loads, and 19 other matrix instructions, using 21 matrix registers and six accumulators.
+Each block of keys takes six insn:mmacc[], one for the product Q K^T^, four for P V, and one for the row sums, five loads, and 17 other matrix instructions, using 20 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
 For training, the forward pass also stores _m_ and 1/__l__ of each row from m16x2 and m12x2, with insn:mss.tst[] and _LD_ = 0, from which the backward pass (<<ztt-example-flash-bwd>>) recomputes P.
 
