@@ -1763,6 +1763,24 @@ Each block of keys takes six insn:mmacc[], one for the product Q K^T^, four for 
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
 For training, the forward pass also stores _m_ and 1/__l__ of each row from m16x2 and m12x2, with insn:mss.tst[] and _LD_ = 0, from which the backward pass (<<ztt-example-flash-bwd>>) recomputes P.
 
+For causal attention, the last block of keys of a block of queries holds the keys at the queries' own positions, and query _r_ of the block attends to keys 0 to _r_ of it.
+The scores of that block are masked, before insn:mredmax.row[], by adding negative infinity above the diagonal; the mask is built once, while m16x2 holds negative infinity:
+
+[source,asm]
+----
+        mid.col.e32 m24x2
+        mid.row.e32 m26x2
+        mcmpgt      m24.uint32, m24.uint32, m26.uint32  # c > r
+        mcmpgt      m25.uint32, m25.uint32, m27.uint32
+        mand        m24.uint32, m24.uint32, m16.uint32  # -infinity above the diagonal
+        mand        m25.uint32, m25.uint32, m17.uint32
+
+        # in the loop, for the last block of keys, after the scores are scaled:
+        madd        acc4.fp32, acc4.fp32, m24x2.fp32
+----
+
+Every row keeps the score of its own position, so its maximum stays finite.
+
 [[ztt-example-attn-2p]]
 ==== Example: Attention in Two Passes
 
