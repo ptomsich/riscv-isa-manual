@@ -66,7 +66,8 @@ NOTE: Attention keeps its output, _d_/__N__ accumulators for a head dimension _d
 Flash attention (<<ztt-example-flash>>) needs one more for the scores, one for their row sums, and another to compute the next block's scores while the current one completes, so eight accumulators hold an output of _d_ = 5__N__, or of _d_ = 6__N__ without the overlap.
 An attention that stores its scores in memory (<<ztt-example-attn-2p>>) holds nothing else in the pass that computes the output, so eight accumulators hold an output of _d_ = 8__N__, a head dimension of 128 at _N_ = 16.
 The backward pass (<<ztt-example-flash-bwd>>) holds two outputs, dK and dV, with S^T^ and dP^T^ in one pass, so eight accumulators hold _d_ = 3__N__; a larger head dimension recomputes the scores in further passes, and an implementation with a larger _N_ recomputes less.
-Fewer accumulators would slice the common head dimensions of 64 and 128 at small _N_, while more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
+A larger head dimension computes its output in groups of columns and reloads the stored scores once per group, so _R_ sets the number of groups, not the head dimensions served.
+Eight hold the forward pass at the common head dimensions of 64 and 128 at _N_ = 16, the latter over stored scores; more would add state to every context and every context switch without benefit to the other kernels, which a 2 {times} 4 block of a matrix multiply already serves.
 ext:ztte[] alone has four, for a 2 {times} 2 block: it lacks the operations on accumulators that attention uses, and with short rows the accumulator registers are most of its state.
 
 [[ztt-mstatus]]
@@ -1068,8 +1069,8 @@ insn:mmacc[] reads both sources along _K_, by rows, as the matrix multiply of ex
 * A transposing load of B and insn:mmacc[] give the result of a form that multiplies by B, because the numerics depend only on _k_ (<<ztt-matmul-numerics>>).
 * Kernels, packing routines, and compilers carry over between ext:zvvmm[] and Ztt.
 
-insn:mmaccn[] is needed only by the attention backward pass (<<ztt-example-flash-bwd>>).
-In its split forms, K, Q, and dO are each the B of one product and the B^T^ of another, so that without it each is loaded twice; a single pass computes dQ^T^ = K^T^ dS^T^ from the dS^T^ it holds, where without it dS^T^ is stored and reloaded as dS.
+insn:mmaccn[] serves only the attention backward pass (<<ztt-example-flash-bwd>>), which can be computed without it.
+In its split forms, K, Q, and dO are each the B of one product and the B^T^ of another, so that without it each is loaded twice, once transposed; a single pass, which eight accumulators hold for at most _d_ = 3__N__, computes dQ^T^ = K^T^ dS^T^ from the dS^T^ it holds, where without it dS^T^ is stored and reloaded as dS.
 It reads B by columns, which an implementation that reads both sources by rows executes at a fraction of the rate or with an added transpose unit, so it is a separate extension, defined for that kernel only: for its datatypes, at _K_ = _N_, and with no form that transposes A.
 Sources narrower than 16 bits do not fit the register model: the _W_ products of a sub-dot-product (<<ztt-matmul-numerics>>) would take their elements of B from _W_ rows instead of one 16-bit container, and a B of _K_ > _N_ rows would not be a register operand.
 Other sources of 16 bits or more would fit, but no kernel needs them in registers in both orientations; for operands from memory, a transposing load and insn:mmacc[] serve every datatype.
@@ -1941,7 +1942,7 @@ The scratch buffers hold _L_ {times} _N_ BF16 elements each, as consecutive _N_ 
 
 Per block of keys, the passes take the eight insn:mmacc[] of pass 1 and the eight of pass 2b, and 11 other matrix instructions besides loads and stores, none of which operates elementwise on an accumulator.
 Pass 2b holds only the output in accumulators, so eight cover _d_ = 8__N__ with the values read once.
-This suits implementations with eight resident accumulators; one with fewer computes the output in groups of columns, loading the P tiles once per group.
+This suits implementations with eight resident accumulators; one with fewer, or a larger head dimension, computes the output in groups of columns, loading the P tiles once per group.
 
 NOTE: Scratch tiles in BF16 round the scores before the exponential, which the single-pass form does not; FP32 tiles avoid this at twice their traffic.
 Scaling Q in BF16 rounds the scaled queries.
@@ -1949,7 +1950,7 @@ Scaling Q in BF16 rounds the scaled queries.
 [[ztt-example-flash-bwd]]
 ==== Example: Flash Attention Backward Pass
 
-The following code computes the gradients dQ, dK, and dV of the attention in <<ztt-example-flash>> for a head dimension _d_ = 2__N__, from Q, K, V, O, the output gradient dO, and the _m_ and 1/__l__ of each query that the forward pass stores.
+The following code computes the gradients dQ, dK, and dV of an attention as in <<ztt-example-flash>>, for a head dimension _d_ = 2__N__ that both passes hold in accumulators, from Q, K, V, O, the output gradient dO, and the _m_ and 1/__l__ of each query that the forward pass stores.
 With P recomputed as 2^__x__^ {times} 1/__l__ for the elements _x_ of __s__ log~2~ e Q K^T^ − _m_, and D the row sums of dO ∘ O, the gradients are dS = P ∘ (dO V^T^ − D), dQ = __s__ dS K, dK = __s__ dS^T^ Q, and dV = P^T^ dO.
 Each output stays in accumulators across one loop:
 
@@ -2103,7 +2104,7 @@ The vectors _m_, 1/__l__, and D load with _LD_ = 0, replicated along each row in
 Per block, pass 1 takes four matrix multiplies, two loads, and 16 other matrix instructions, using 23 matrix registers and four accumulators; pass 2 takes six matrix multiplies, five loads, and 17 other matrix instructions, using 20 matrix registers and six accumulators.
 Both passes compute S and dP, so each pair of blocks takes seven matrix multiplies of _N_^2^__d__ multiply-adds where five suffice.
 
-NOTE: Pass 2 holds dK, dV, S^T^, and dP^T^, 2__d__/__N__ + 2 accumulators, so eight cover _d_ = 3__N__; a larger head dimension computes dK and dV in separate passes, each recomputing S^T^.
+NOTE: Pass 2 holds dK, dV, S^T^, and dP^T^, 2__d__/__N__ + 2 accumulators, so eight cover _d_ = 3__N__; a larger head dimension, such as the 4__N__ of <<ztt-example-flash>>, computes dK and dV in separate passes, each recomputing S^T^, and one above 6__N__ in groups of columns.
 A single pass over blocks of keys computes S and dP once, but loads, adds to, and stores dQ in every block: insn:mmaccn[] computes dQ^T^ = __s__ K^T^ dS^T^ from K^T^, loaded once per block of keys, and the transposing accumulator loads and stores transfer dQ^T^.
 
 [[ztt-insns]]
