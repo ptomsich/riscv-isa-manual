@@ -1714,10 +1714,7 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         mls.tst.e16 m11, (t6), a5
         add         a4, a4, t3
         mzero       acc4
-        mmacc       acc4.fp32, m0.bf16, m4.bf16     # scores
-        mmacc       acc4.fp32, m1.bf16, m5.bf16
-        mmacc       acc4.fp32, m2.bf16, m6.bf16
-        mmacc       acc4.fp32, m3.bf16, m7.bf16
+        mmacc       acc4.fp32, m0x4.bf16, m4x4.bf16 # scores, K = 4N
         mmul        acc4.fp32, acc4.fp32, s1
         mmv         m18x2, m16x2                    # old row maxima
         mredmax.row m16x2.fp32, acc4.fp32           # new row maxima
@@ -1763,7 +1760,7 @@ The output stays in four accumulators, the scores use a fifth, and the row sums 
         msa.st.e16  acc3, (a6), s0      # O[i][3N]
 ----
 
-Each block of keys takes nine insn:mmacc[], eight for the products Q K^T^ and P V and one for the row sums, five loads, and 19 other matrix instructions, using 21 matrix registers and six accumulators.
+Each block of keys takes six insn:mmacc[], one for the product Q K^T^, four for P V, and one for the row sums, five loads, and 19 other matrix instructions, using 21 matrix registers and six accumulators.
 With a seventh accumulator, the scores of the next block are computed while the current block completes.
 For training, the forward pass also stores _m_ and 1/__l__ of each row from m16x2 and m12x2, with insn:mss.tst[] and _LD_ = 0, from which the backward pass (<<ztt-example-flash-bwd>>) recomputes P.
 
