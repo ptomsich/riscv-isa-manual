@@ -1,0 +1,84 @@
+<<<
+[#insns-mmv-m-x,reftext="Move X Register to Matrix Element"]
+==== insn:mmv.m.x[]
+
+Synopsis::
+Move an X register to an element of a matrix register
+
+Mnemonic::
+insn:mmv.m.x[].__es__{nbsp}__md__, _rs1_, _rs2_
++
+_es_ is `e8`, `e16`, `e32`, or `e64`, as in `mmv.m.x.e32`.
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 2, name: 'ew' },
+    { bits: 5, name: '01110', attr: ['MMV.M.X'] }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _rs1_ | input | The value
+| _rs2_ | input | The element number _k_
+| _md_ | input and output | A matrix register
+|===
+
+Description::
+[#norm:mmv_m_x_op]#insn:mmv.m.x[] writes the low _w_ bits of X register _rs1_ to element _k_ of matrix register _md_ and leaves its other elements unchanged.
+_k_ is the value of X register _rs2_, and element _k_ is element (⌊__k__/__C__⌋, _k_ mod _C_) of the _N_ {times} _C_ matrix that the register holds for the element width _w_ = 8{nbsp}{times}{nbsp}2^`ew`^ bits, with _C_ = RLEN/__w__.#
++
+[#norm:mmv_m_x_range]#If _k_ is not less than _NC_, no element is written.#
+
+Exceptions::
+[#norm:mmv_m_x_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* `ew` is 3 (`e64`) and XLEN = 32.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec = MMV_M_X(md, rs1, rs2, ew)
+  <-> 0b01110 @ ew @ rs2 @ rs1 @ 0b100 @ md @ 0b1110111
+
+function clause execute MMV_M_X(md, rs1, rs2, ew) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  let w = 8 * 2 ^ unsigned(ew);
+  if w > xlen then return Illegal_Instruction();
+  let N = ztt_N();
+  let C = ztt_RLEN() / w;
+  let k = unsigned(X(rs2));
+  if k < N * C then {
+    ztt_write_m_bits(md, w, k / C, k % C, X(rs1)[w - 1 .. 0]);
+    ztt_set_dirty();
+  };
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+|===

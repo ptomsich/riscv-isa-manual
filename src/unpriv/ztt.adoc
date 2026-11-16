@@ -2380,6 +2380,8 @@ include::ztt-insns/mmacc.adoc[]
 
 include::ztt-insns/mmaccn.adoc[]
 
+include::ztt-insns/mmv-m-x.adoc[]
+
 include::ztt-insns/mmv-x-m.adoc[]
 
 include::ztt-insns/msa-st.adoc[]
