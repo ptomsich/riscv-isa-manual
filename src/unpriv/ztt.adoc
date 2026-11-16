@@ -392,7 +392,7 @@ This bounds the matrix registers an instruction accesses: at most three for an e
 [#norm:Ztt_acc_layout]#An accumulator register holds an _N_ {times} _N_ matrix of 32-bit elements in row-major order.#
 [#norm:Ztt_acc_narrow]#A value of an accumulator datatype narrower than 32 bits occupies the low bits of its element; the other bits are written as zero and ignored when read.#
 
-Matrix multiplies read and write only accumulator datatypes of 32 and 64 bits; the narrower ones are produced by insn:mcvt[] and transferred by the accumulator loads and stores.
+Matrix multiplies read and write only accumulator datatypes of 32 and 64 bits, and elementwise operations and reductions only those of 32 bits (<<ztt-ops-acc>>); the narrower ones are produced by insn:mcvt[] and transferred by the accumulator loads and stores.
 
 [#norm:Ztt_acc_pair]#An accumulator of a 64-bit datatype occupies an _accumulator pair_, two consecutive accumulator registers of which the first has an even register number, and holds an _N_ {times} _N_ matrix of 64-bit elements.
 The even register holds columns 0 to _N_/2 − 1, and the odd register columns _N_/2 to _N_ − 1.
@@ -619,8 +619,8 @@ Encoding the group size of each operand separately would express the same set of
 [[ztt-legality]]
 ==== Supported Type Combinations and Illegal Instructions
 
-// OPEN: the accumulator datatypes of the elementwise operations and reductions with
-// an accumulator operand; whether a reserved value in frm traps.
+// OPEN: whether the elementwise operations and reductions take accumulator pairs;
+// whether a reserved value in frm traps.
 
 An operation is defined for certain combinations of the datatypes of its operands, and an extension provides all those of its instructions.
 
@@ -637,7 +637,8 @@ An operation is defined for certain combinations of the datatypes of its operand
 |insn:mmaccn[] |FP16, BF16, TF32, or FP32 sources, and an FP32 destination
 |insn:mmaccs[] |<<ztt-mx-table>>
 |insn:madd[], insn:msub[], insn:mmul[], insn:mmax[], insn:mmin[], insn:mldexp[], insn:mredmax[], insn:mredmin[] |One datatype: an integer datatype, or a floating-point datatype other than E8M0 and TF32
-|insn:madd[] of a matrix-register operand to an accumulator |A source datatype that converts exactly to the destination datatype (<<ztt-ops-acc>>)
+|The same, with an accumulator operand |INT32, UINT32, or FP32, of those the operation supports (<<ztt-ops-acc>>)
+|insn:madd[] of a matrix-register operand to an accumulator |A source datatype that converts exactly to the destination datatype (<<ztt-exact-table>>)
 |insn:mneg[], insn:mabs[] |As insn:madd[], without the unsigned integer datatypes
 |insn:msmul[] |One signed integer datatype
 |insn:mfma[] |One floating-point datatype of insn:madd[]
@@ -1354,7 +1355,22 @@ mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon
 |insn:mmax[], insn:mmin[] |scalar |ReLU and clamping
 |===
 
-[#norm:Ztt_acc_madd_m]#When the second operand of insn:madd[] is a matrix-register operand, it holds a tile (<<ztt-operands>>), and its datatype is one that converts exactly to the accumulator datatype; the sum is rounded once.#
+[#norm:Ztt_acc_types]#An accumulator operand of an elementwise operation or of a reduction has the datatype INT32, UINT32, or FP32, of those that the operation supports.#
+
+[#norm:Ztt_acc_madd_m]#When the second operand of insn:madd[] is a matrix-register operand, it holds a tile (<<ztt-operands>>), and its datatype is one that converts exactly to the accumulator datatype; its elements are converted, and the sum is rounded once.#
+[#norm:Ztt_exact]#A datatype _converts exactly_ to another if every value of the first is a value of the second; <<ztt-exact-table>> lists the datatypes that do.#
+
+[[ztt-exact-table]]
+.Datatypes of a matrix-register operand that insn:madd[] adds to an accumulator.
+[%autowidth,float="center",align="center",cols="<,<",options="header"]
+|===
+|Accumulator datatype |Datatype of the matrix-register operand
+|FP32 |FP32, FP16, BF16, E2M1, E2M3, E3M2, E4M3, E5M2, and the integer datatypes of 16 bits or narrower
+|INT32 |INT32, and the integer datatypes of 16 bits or narrower
+|UINT32 |UINT32, and the unsigned integer datatypes of 16 bits or narrower
+|===
+
+[#norm:Ztt_bcast_type]#A broadcast operand has the datatype of the accumulator, or INT32 as the exponent of insn:mldexp[].#
 [#norm:Ztt_bcast]#A broadcast operand is a vector _v_ taken from a matrix-register operand that holds a tile (<<ztt-operands>>).
 In the row form, written with the suffix `.row`, _v_ is row 0 of the tile, and element (_i_, _j_) of the result uses _v_~__j__~; in the column form, written `.col`, _v_ is column 0, and element (_i_, _j_) uses _v_~__i__~.#
 
@@ -1406,7 +1422,7 @@ The destination is a matrix-register operand that holds a tile, or an accumulato
 The source is read in full before the destination is written.#
 [#norm:Ztt_red_fp]#For floating-point datatypes, the reductions are the maximumNumber and minimumNumber operations of IEEE 754-2019, as for insn:mmax[] and insn:mmin[], and raise NV for a signaling NaN.
 An `rm` other than 0 and `sat` are reserved for them.#
-[#norm:Ztt_red_types]#The reductions support the datatypes of insn:mmax[] and insn:mmin[] (<<ztt-ops-arith>>).#
+[#norm:Ztt_red_types]#The reductions support the datatypes of insn:mmax[] and insn:mmin[] (<<ztt-ops-arith>>), and with an accumulator operand those of <<ztt-ops-acc>>.#
 
 NOTE: The result is replicated along the reduced dimension, so it is an operand of elementwise operations, which take no broadcasts, and every instruction writes its whole destination.
 The destination accumulates, so a running maximum over tiles needs no insn:mmax[], and an accumulator is reduced without a conversion to a matrix register; with the source as the destination, the result is the reduction alone.
