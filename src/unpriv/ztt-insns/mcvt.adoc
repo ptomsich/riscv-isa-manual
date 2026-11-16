@@ -80,7 +80,7 @@ A matrix-register operand of element width _w_ occupies _G_ = 2^`kc`^{nbsp}{time
 +
 * With an accumulator operand, `kc` is 0: _C_ is RLEN/16, the columns of the part that `sd` or `s1` of the accumulator operand selects, or _N_ between two accumulator registers.
 * With `kc` = 0, a matrix-register operand narrower than 16 bits is a slot (_G_ < 1), selected by `sd` or `s1`; wider operands occupy _w_/16 registers.
-* With `kc` > 0, both operands are matrix registers, and each _G_ is 1, 2, or 4.
+* With `kc` > 0, both operands are matrix registers of 16 bits or narrower, and each _G_ is 1, 2, or 4.
 * `sd` and `s1` are otherwise 0 for an operand that is neither a slot nor a part.
 +
 [source,asm]
@@ -109,7 +109,7 @@ Exceptions::
 * _t1_ or _td_ is FP64 and ext:d[] is not implemented.
 * The pair of _t1_ and _td_ is not supported (<<ztt-ops-mcvt>>), or names a reserved type code.
 * `kc` is greater than 5, or `kc` is not 0 and an operand is an accumulator register.
-* A matrix-register operand's _G_ is not 1, 2, or 4 and the operand is not a slot, or is not valid for its datatype, or names a group that is not aligned (<<ztt-groups>>).
+* A matrix-register operand's _G_ is not valid for its element width (<<ztt-g-table>>), or names a group that is not aligned (<<ztt-groups>>).
 * A matrix-register operand's _G_ is 2 or 4 and ext:zttg[] is not implemented.
 * A slot index is 16/__w__ or more, or is not 0 for a matrix-register operand that is not a slot.
 * The index of an accumulator operand is 16__N__/RLEN or more, or is not 0 in a conversion between accumulator registers.
@@ -143,7 +143,8 @@ function clause execute MCVT(cls, md, ms1, td, rm, sat, t1, kc, sd, s1) = {
   if not(d_is_m & s_is_m) & kc != 0b000 then return Illegal_Instruction();
   /* A matrix-register operand is a group of G = 2^kc * w / 16 registers, or a slot;
      an accumulator operand converted with one is the part its index selects.
-     ztt_cvt_operand returns None() for G > 1 without Zttg and for an index out of range. */
+     ztt_cvt_operand returns None() for a G that is not valid for the element width,
+     for G > 1 without Zttg, and for an index out of range. */
   let dst : option(ztt_operand) = ztt_cvt_operand(d_is_m, md, td, kc, sd);
   let src : option(ztt_operand) = ztt_cvt_operand(s_is_m, ms1, t1, kc, s1);
   if dst == None() | src == None() then return Illegal_Instruction();

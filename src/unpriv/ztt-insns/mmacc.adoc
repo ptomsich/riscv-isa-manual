@@ -86,7 +86,7 @@ Exceptions::
 * csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
 * _td_ is a floating-point datatype, and ext:f[] is not implemented, or csr:mstatus[fs] is Off, or V=1 and csr:vsstatus[fs] is Off.
 * The combination of _t1_, _t2_, and _td_ is not supported (<<ztt-mmacc-table>>, <<ztt-acc64-table>>), or names a reserved type code.
-* `kc` is greater than 5, or a source's _G_ is not 1, 2, or 4, is not valid for its datatype, or names a group that is not aligned (<<ztt-groups>>).
+* `kc` is greater than 5, or a source's _G_ is not 1, 2, or 4, is not valid for its element width (<<ztt-g-table>>), or names a group that is not aligned (<<ztt-groups>>).
 * A source's _G_ is 2 or 4 and ext:zttg[] is not implemented.
 * _md_ is not less than _R_, or _td_ is a 64-bit datatype and _md_ is odd.
 * _td_ is an integer datatype and `rm` or `sat` is not 0.
@@ -111,6 +111,9 @@ function clause execute MMACC(md, ms1, ms2, td, rm, sat, t1, t2, kc) = {
   let s1 = 2 ^ unsigned(kc) * ztt_type_width(t1);
   let s2 = 2 ^ unsigned(kc) * ztt_type_width(t2);
   if s1 < 16 | s1 > 64 | s2 < 16 | s2 > 64 then return Illegal_Instruction();
+  /* A source wider than 16 bits holds RLEN/16 columns. */
+  if kc != 0b000 & (ztt_type_width(t1) > 16 | ztt_type_width(t2) > 16)
+  then return Illegal_Instruction();
   let G1 = s1 / 16;
   let G2 = s2 / 16;
   if (G1 > 1 | G2 > 1) & not(currentlyEnabled(Ext_Zttg)) then return Illegal_Instruction();

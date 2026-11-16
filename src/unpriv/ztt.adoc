@@ -366,7 +366,7 @@ NOTE: Matrices written into the slots of a register lie side by side in the oper
 [#norm:Ztt_group]#An operand may occupy a group of _G_ = 2 or 4 consecutive matrix registers, the first of which has a register number that is a multiple of _G_.
 Register _j_ of the group holds columns _j_{nbsp}{times}{nbsp}RLEN/__w__ to (__j__ + 1){nbsp}{times}{nbsp}RLEN/__w__ − 1, so the operand is an _N_ {times} _G_{nbsp}{times}{nbsp}RLEN/__w__ matrix.#
 [#norm:Ztt_group_size]#An operand of RLEN/16 columns and element width _w_ > 16 occupies _G_ = _w_/16 registers.
-A matrix multiply may use a larger _G_ for its wider source (<<ztt-ops>>).
+An operand of 16 bits or narrower occupies a group where it holds more columns than one register does (<<ztt-g-table>>).
 Elementwise operations on matrix registers take no groups (<<ztt-ops-elementwise>>).
 No operand occupies more than four registers.#
 [#norm:Ztt_group_align]#An instruction that names a group whose first register number is not a multiple of _G_ raises an illegal-instruction exception.#
@@ -569,7 +569,24 @@ Bits 38:37, 47:44, and 63:58 are reserved.#
 [#norm:Ztt_cols_kc]#Matrix multiplies and conversions encode _C_ = 2^`kc`^{nbsp}{times}{nbsp}RLEN/16 in a 3-bit field `kc`; the values 6 and 7 are reserved.
 An operand of element width _w_ then occupies _G_ = 2^`kc`^{nbsp}{times}{nbsp}__w__/16 registers.#
 [#norm:Ztt_cols_g]#An operand with _G_ < 1 is a slot of a register (<<ztt-slots>>), and is valid only where _C_ = RLEN/16 and the instruction encodes a slot index.
-An instruction for which an operand's _G_ is otherwise less than 1, is greater than 4, or is not valid for its datatype (<<ztt-groups>>) raises an illegal-instruction exception.#
+An operand wider than 16 bits is valid only where _C_ = RLEN/16.
+An instruction for which an operand's _G_ is not listed in <<ztt-g-table>> for its element width raises an illegal-instruction exception.#
+
+[[ztt-g-table]]
+.Values of _G_ valid for each element width, and the `kc` that selects them.
+[%autowidth,float="center",align="center",cols="<,<,<",options="header"]
+|===
+|Element width |_G_ |`kc`
+|2 bits |1/8 (slot), 1, 2, 4 |0, 3, 4, 5
+|4 bits |1/4 (slot), 1, 2, 4 |0, 2, 3, 4
+|8 bits |1/2 (slot), 1, 2, 4 |0, 1, 2, 3
+|16 bits |1, 2, 4 |0, 1, 2
+|32 bits |2 |0
+|64 bits |4 |0
+|===
+
+An instruction without a column field whose operands hold RLEN/16 columns takes the values of `kc` = 0.
+Loads, stores, and index matrices encode _G_ directly, and are not subject to the table.
 
 _G_ depends on neither _N_ nor RLEN, so the registers an instruction accesses follow from its register fields, `kc`, and the element widths of its datatypes.
 The column field applies to the instruction groups as follows:
