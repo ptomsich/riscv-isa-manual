@@ -1,0 +1,155 @@
+<<<
+[#insns-msa-st,reftext="Accumulator Store, Strided"]
+==== insn:msa.st[]
+
+Synopsis::
+Strided store of an accumulator register
+
+Mnemonic::
+insn:msa.st[].__es__{nbsp}__md__, (_rs1_), _rs2_ +
+insn:msa.pst[].__es__{nbsp}__md__, (_rs1_), _rs2_
++
+_es_ is `e4`, `e8`, `e16`, `e32`, or `e64` (<<ztt-esize-table>>), as in `msa.st.e16`.
+insn:msa.pst[] is the partial-tile variant.
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '011', attr: ['MEM'] },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 3, name: '101', attr: ['MSA.ST'] },
+    { bits: 1, name: 'p' },
+    { bits: 3, name: '000' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 2, name: '00' },
+    { bits: 3, name: 'es' },
+    { bits: 20, name: '00000000000000000000' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
+`p` is set for insn:msa.pst[].
+The full-tile form also has a 32-bit short form, for the element sizes `e8` to `e64`, which `ew` encodes as 0 to 3:
+
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 2, name: 'ew' },
+    { bits: 5, name: '01010', attr: ['MSA.ST'] }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _rs1_ | input | Base address
+| _rs2_ | input | Leading dimension _LD_, in elements; the descriptor for insn:msa.pst[]
+| _md_ | input | An accumulator register, or an accumulator pair for `e64`; the field `md` names the register that is stored
+|===
+
+Description::
+[#norm:msa_st_op]#insn:msa.st[] writes the low _w_ bits of element (_r_, _c_) of the accumulator register to memory element (_r_, _c_), for each of its _N_ rows and _N_ columns.
+Memory element (_r_, _c_) is the _w_ bits at bit offset (_r_{nbsp}{times}{nbsp}__LD__ + _c_) {times} _w_ from the base address, where _w_ is the element size (<<ztt-memory-addressing>>).#
++
+[#norm:msa_st_e64]#With `e64`, _md_ names an accumulator pair, which is stored as an _N_ {times} _N_ matrix of 64-bit elements (<<ztt-acc-layout>>).#
++
+[#norm:msa_st_partial]#insn:msa.pst[] takes a descriptor in _rs2_, stores only the elements below its row count and column count, and does not access memory for the others (<<ztt-memory-partial>>).
+For `e4`, the column count is rounded up to a multiple of 2, so that whole bytes are written.#
+
+Exceptions::
+[#norm:msa_st_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* `es` is 000 (`e2`), 110 (`p6`), or 111.
+* `es` is 101 (`e64`), and no 64-bit accumulation extension (<<ztt-ext-acc64>>) is implemented or _md_ is odd.
+* _md_ is not less than _R_.
+* A reserved field, bits 31:29, 40:37, or 63:44, is not 0.
+
++
+[#norm:msa_st_mem]#_Store/AMO Address Misaligned_ is raised if a stored element of 8 bits or more is not naturally aligned, or if _LD_ {times} _w_ is not a multiple of 8 for `e4` (<<ztt-memory-alignment>>).#
+Access-fault and page-fault exceptions are raised as for a store to the bytes that hold the stored elements.
+[#norm:msa_st_restart]#A store that raises an exception may have written any part of its data to memory (<<ztt-exceptions>>).#
+
+Operation::
+[source,sail]
+--
+mapping clause encdec64 = MSA_ST(md, rs1, rs2, es, p)
+  <-> 0x00000 @ es @ 0b00 @ 0b00 @ ZTT_ZLMAJ @ 0b11
+    @ 0b000 @ p @ 0b101 @ rs2 @ rs1 @ 0b011 @ md @ ZTT_ZLOP @ 0b11111
+
+/* The short form: a full-tile store of e8, e16, e32, or e64. */
+mapping clause encdec = MSA_ST(md, rs1, rs2, es, 0b0)
+  <-> 0b01010 @ ztt_acc_ew(es) @ rs2 @ rs1 @ 0b100 @ md @ 0b1110111
+
+mapping ztt_acc_ew : bits(3) <-> bits(2) = {
+  0b010 <-> 0b00,   /* e8 */
+  0b011 <-> 0b01,   /* e16 */
+  0b100 <-> 0b10,   /* e32 */
+  0b101 <-> 0b11    /* e64 */
+}
+
+function clause execute MSA_ST(md, rs1, rs2, es, p) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  /* e4, e8, e16, and e32; e64 stores an accumulator pair. */
+  if es == 0b000 | es == 0b110 | es == 0b111 then return Illegal_Instruction();
+  let w = ztt_esize_mem(es);
+  if w == 64 & (not(ztt_acc64_enabled()) | unsigned(md) % 2 != 0)
+  then return Illegal_Instruction();
+  if unsigned(md) >= ztt_R() then return Illegal_Instruction();
+  let N = ztt_N();
+  /* A descriptor holds LD and the counts; a count of 0, or one beyond the
+     matrix, selects every row or column. */
+  let (ld, rows, cols0) : (int, int, int) =
+    if p == 0b1 then ztt_descriptor(X(rs2), N, N) else (unsigned(X(rs2)), N, N);
+  /* Whole bytes are written: two e4 elements. */
+  let cols = if w == 4 then (cols0 + 1) / 2 * 2 else cols0;
+
+  foreach (r from 0 to (rows - 1)) {
+    foreach (c from 0 to (cols - 1)) {
+      /* The low w bits of a 32-bit element, or a 64-bit element of a pair. */
+      let v = ztt_read_acc_bits(md, w, r, c);
+      /* Memory element (r, c): w bits at bit offset (r * LD + c) * w from X(rs1),
+         modulo 2^XLEN.  Err() carries a misaligned, access-fault, or page-fault
+         exception; elements stored before it remain written. */
+      match ztt_store_element(X(rs1), ld, r, c, w, v) {
+        Err(e) => return e,
+        Ok(_)  => ()
+      }
+    }
+  };
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+
+|Zttfp64mm, Zttfp32fp64mm, Ztti16i64mm (<<ztt-ext-acc64>>), for `e64`
+|0.1
+|Draft
+|===
