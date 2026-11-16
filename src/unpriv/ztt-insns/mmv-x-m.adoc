@@ -1,0 +1,83 @@
+<<<
+[#insns-mmv-x-m,reftext="Move Matrix Element to X Register"]
+==== insn:mmv.x.m[]
+
+Synopsis::
+Move an element of a matrix register to an X register
+
+Mnemonic::
+insn:mmv.x.m[].__es__{nbsp}__rd__, _ms1_, _rs2_
++
+_es_ is `e8`, `e16`, `e32`, or `e64`, as in `mmv.x.m.e32`.
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'rd' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 2, name: 'ew' },
+    { bits: 5, name: '01101', attr: ['MMV.X.M'] }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _ms1_ | input | A matrix register
+| _rs2_ | input | The element number _k_
+| _rd_ | output | The element, sign-extended
+|===
+
+Description::
+[#norm:mmv_x_m_op]#insn:mmv.x.m[] writes element _k_ of matrix register _ms1_, sign-extended to XLEN bits, to X register _rd_.
+_k_ is the value of X register _rs2_, and element _k_ is element (⌊__k__/__C__⌋, _k_ mod _C_) of the _N_ {times} _C_ matrix that the register holds for the element width _w_ = 8{nbsp}{times}{nbsp}2^`ew`^ bits, with _C_ = RLEN/__w__.#
++
+[#norm:mmv_x_m_range]#If _k_ is not less than _NC_, _rd_ is written with 0.#
+
+Exceptions::
+[#norm:mmv_x_m_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* `ew` is 3 (`e64`) and XLEN = 32.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec = MMV_X_M(rd, ms1, rs2, ew)
+  <-> 0b01101 @ ew @ rs2 @ ms1 @ 0b100 @ rd @ 0b1110111
+
+function clause execute MMV_X_M(rd, ms1, rs2, ew) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  let w = 8 * 2 ^ unsigned(ew);
+  if w > xlen then return Illegal_Instruction();
+  let N = ztt_N();
+  let C = ztt_RLEN() / w;
+  let k = unsigned(X(rs2));
+  X(rd) = if k < N * C
+          then sign_extend(ztt_read_m_bits(ms1, w, k / C, k % C))
+          else zeros();
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+|===
