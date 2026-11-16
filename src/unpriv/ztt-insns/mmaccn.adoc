@@ -32,7 +32,7 @@ Encoding::
     { bits: 6, name: '000000' }
 ], config:{lanes: 2, hspace: 1024}}
 ....
-+
+
 Common datatype combinations also have a 32-bit short form (<<ztt-enc32-mm-table>>).
 
 Arguments::
