@@ -864,6 +864,7 @@ The implementation discloses the algorithm, the values of its parameters, and wh
 * [#norm:Ztt_num_rnd_xct]#If `rnd` = `xct`, _S_ is not rounded.#
 
 [#norm:Ztt_num_acc]#Each group then updates the element as C~__i__,__j__~ {leftarrow} round~rm~(C~__i__,__j__~ + _S_), rounding as selected by `rm`.#
+[#norm:Ztt_num_order]#The groups of a step update the element one at a time, in increasing order of _k_, so each group uses the C~__i__,__j__~ that the preceding group wrote.#
 [#norm:Ztt_num_acc_c]#When the reduction takes C~__i__,__j__~, _S_ already includes it, `rnd` is `xct`, and the group updates the element as C~__i__,__j__~ {leftarrow} round~rm~(_S_).#
 
 [#norm:Ztt_num_disclose]#An implementation discloses its (_P_, `psm`, `rnd`) for each combination of source element widths and C datatype that it supports.
