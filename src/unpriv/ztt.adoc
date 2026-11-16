@@ -1210,10 +1210,16 @@ Mixed widths fit the register model unchanged: the narrower source occupies the 
 [[ztt-ops-elementwise]]
 ==== Elementwise Operations
 
-[#norm:Ztt_ew_operands]#An elementwise operation applies to corresponding elements of matrix-register operands of one element width, each of which is one matrix register, or of accumulator registers as listed in <<ztt-acc-ops-table>>.
-A scalar operand, taken from an X register or from a 7-bit signed immediate in the instruction, applies to every element.#
+[#norm:Ztt_ew_operands]#An elementwise operation applies to corresponding elements of matrix-register operands of one element width, each of which is one matrix register, or of accumulator registers as listed in <<ztt-acc-ops-table>>.#
+
+[#norm:Ztt_ew_scalar_form]#A _scalar operand_ takes the place of the last source of an operation, has the datatype of that source, and applies to every element.
+It is an X register or a 7-bit signed immediate in the instruction.#
 [#norm:Ztt_ew_scalar]#An X register supplies the encoding of a value of _w_ bits in its low _w_ bits; _w_ > XLEN is reserved.
-An immediate is sign-extended and supplies its low _w_ bits likewise; it is reserved for an operand of a floating-point datatype.#
+An immediate is sign-extended and supplies its low _w_ bits likewise; it is reserved where the scalar operand has a floating-point datatype.#
+[#norm:Ztt_ew_scalar_ops]#On matrix registers, insn:madd[], insn:msub[], insn:mmul[], insn:mmax[], insn:mmin[], insn:msmul[], insn:mfma[], and the compares take a scalar operand as their second source, insn:mldexp[] as its exponent, and insn:mrol[] as its rotate amount; the bitwise operations take none.
+On accumulators, <<ztt-acc-ops-table>> lists the operations that take one.#
+The first source is never a scalar: insn:msub[] subtracts the scalar, and a compare has it on the right.
+In assembly, a scalar operand is an X register name or an immediate.
 
 NOTE: Elementwise operations take no register groups (<<ztt-groups>>), so an _N_ {times} _N_ matrix of a 32-bit or 64-bit datatype in matrix registers takes two or four instructions.
 
@@ -1276,7 +1282,7 @@ The datatype's signedness selects the arithmetic or the logical shift.
 
 [#norm:Ztt_mldexp_types]#insn:mldexp[] supports every integer datatype and every floating-point datatype except E8M0 and TF32.#
 
-In assembly, the third operand is a register name, an X register name, or an immediate, and the flag `mod` follows `rm` and `sat`:
+In assembly, the flag `mod` follows `rm` and `sat`:
 
 [source,asm]
 ----
@@ -1391,7 +1397,7 @@ msmul.row acc1.int32, acc1.int32, m14x2.int32, rmm  # per-channel multiplier
 [[ztt-ops-cmp]]
 ===== Compares
 
-[#norm:Ztt_mcmp]#insn:mcmpeq[], insn:mcmpne[], insn:mcmplt[], insn:mcmple[], insn:mcmpgt[], and insn:mcmpge[] compare corresponding elements of two sources of one datatype and write all ones where the comparison holds and zero elsewhere.
+[#norm:Ztt_mcmp]#insn:mcmpeq[], insn:mcmpne[], insn:mcmplt[], insn:mcmple[], insn:mcmpgt[], and insn:mcmpge[] compare corresponding elements of two sources of one datatype, or the elements of a source with a scalar operand, and write all ones where the comparison holds and zero elsewhere.
 The sources have a datatype of the arithmetic operations (<<ztt-ops-arith>>), and the destination datatype is the unsigned integer datatype of the same width.
 An `rm` other than 0 and `sat` are reserved for them.#
 [#norm:Ztt_mcmp_fp]#For floating-point datatypes, a comparison with a NaN is false except for insn:mcmpne[]; insn:mcmpeq[] and insn:mcmpne[] raise NV for a signaling NaN, and the others for any NaN, as insn:feq.s[], insn:flt.s[], and insn:fle.s[] do.#
