@@ -1,0 +1,148 @@
+<<<
+[#insns-mss-st,reftext="Matrix Store, Strided"]
+==== insn:mss.st[]
+
+Synopsis::
+Strided store of a matrix-register operand
+
+Mnemonic::
+insn:mss.st[].__es__{nbsp}__md__``x``__G__, (_rs1_), _rs2_ +
+insn:mss.pst[].__es__{nbsp}__md__``x``__G__, (_rs1_), _rs2_
++
+_es_ is an element-size suffix (<<ztt-esize-table>>), as in `mss.st.e16`, and ``x``__G__ is omitted for _G_ = 1.
+insn:mss.pst[] is the partial-tile variant.
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '011', attr: ['MEM'] },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 3, name: '001', attr: ['MSS.ST'] },
+    { bits: 1, name: 'p' },
+    { bits: 3, name: '000' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 2, name: 'lg' },
+    { bits: 3, name: 'es' },
+    { bits: 20, name: '00000000000000000000' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
+`p` is set for insn:mss.pst[].
+The full-tile form also has a 32-bit short form, for the element sizes and groups that `shape` encodes (<<ztt-enc32-shape-table>>):
+
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 3, name: 'shape' },
+    { bits: 4, name: '0010', attr: ['MSS.ST'] }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _rs1_ | input | Base address
+| _rs2_ | input | Leading dimension _LD_, in elements; the descriptor for insn:mss.pst[]
+| _md_ | input | A group of _G_ = 2^`lg`^ matrix registers; the field `md` names the register that is stored
+|===
+
+Description::
+[#norm:mss_st_op]#insn:mss.st[] writes element (_r_, _c_) of the operand matrix of _md_ to memory element (_r_, _c_), for each of its _N_ rows and _G_{nbsp}{times}{nbsp}RLEN/__w__ columns.
+Memory element (_r_, _c_) is the _w_ bits at bit offset (_r_{nbsp}{times}{nbsp}__LD__ + _c_) {times} _w_ from the base address, where _w_ is the element size (<<ztt-memory-addressing>>).#
++
+[#norm:mss_st_p6]#With `p6`, bits 5:0 of each 8-bit element of the register are written to a 6-bit memory element; the operand matrix has _G_{nbsp}{times}{nbsp}RLEN/8 columns.#
++
+[#norm:mss_st_partial]#insn:mss.pst[] takes a descriptor in _rs2_, stores only the elements below its row count and column count, and does not access memory for the others (<<ztt-memory-partial>>).
+For an element size below 8 bits, the column count is rounded up to a multiple of 8/__w__, or of 4 for `p6`, so that whole bytes are written.#
+
+Exceptions::
+[#norm:mss_st_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* `es` is 111, or `lg` is 3.
+* _G_ is 2 or 4, and ext:zttg[] is not implemented or _md_ is not a multiple of _G_.
+* A reserved field, bits 31:29, 38:37, or 63:44, is not 0.
+
++
+[#norm:mss_st_mem]#_Store/AMO Address Misaligned_ is raised if a stored element of 8 bits or more is not naturally aligned, or if _LD_ {times} _w_ is not a multiple of 8 for a smaller element size (<<ztt-memory-alignment>>).#
+Access-fault and page-fault exceptions are raised as for a store to the bytes that hold the stored elements.
+[#norm:mss_st_restart]#A store that raises an exception may have written any part of its data to memory (<<ztt-exceptions>>).#
+
+Operation::
+[source,sail]
+--
+mapping clause encdec64 = MSS_ST(md, rs1, rs2, es, lg, p)
+  <-> 0x00000 @ es @ lg @ 0b00 @ ZTT_ZLMAJ @ 0b11
+    @ 0b000 @ p @ 0b001 @ rs2 @ rs1 @ 0b011 @ md @ ZTT_ZLOP @ 0b11111
+
+/* The short form: a full-tile store of a shape of ztt-enc32-shape-table. */
+mapping clause encdec = MSS_ST(md, rs1, rs2, es, lg, 0b0)
+  <-> 0b0010 @ ztt_shape(es, lg) @ rs2 @ rs1 @ 0b100 @ md @ 0b1110111
+
+function clause execute MSS_ST(md, rs1, rs2, es, lg, p) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  if es == 0b111 | lg == 0b11 then return Illegal_Instruction();
+  let G = 2 ^ unsigned(lg);
+  if G > 1 & not(currentlyEnabled(Ext_Zttg)) then return Illegal_Instruction();
+  if unsigned(md) % G != 0 then return Illegal_Instruction();
+  let w  = ztt_esize_mem(es);   /* bits of an element in memory: 6 for p6 */
+  let wr = ztt_esize_reg(es);   /* bits of an element in the register: 8 for p6 */
+  let N = ztt_N();
+  let C = G * ztt_RLEN() / wr;
+  /* A descriptor holds LD and the counts; a count of 0, or one beyond the
+     operand matrix, selects every row or column. */
+  let (ld, rows, cols0) : (int, int, int) =
+    if p == 0b1 then ztt_descriptor(X(rs2), N, C) else (unsigned(X(rs2)), N, C);
+  /* Whole bytes are written: 8/w elements, or four p6 elements in three bytes. */
+  let m = if w == 6 then 4 else if w < 8 then 8 / w else 1;
+  let cols = (cols0 + m - 1) / m * m;
+
+  let x = ztt_read_m(md, G, wr, N, C);
+  foreach (r from 0 to (rows - 1)) {
+    foreach (c from 0 to (cols - 1)) {
+      /* Memory element (r, c): w bits at bit offset (r * LD + c) * w from X(rs1),
+         modulo 2^XLEN.  Err() carries a misaligned, access-fault, or page-fault
+         exception; elements stored before it remain written. */
+      match ztt_store_element(X(rs1), ld, r, c, w, ztt_element(x, r, c)) {
+        Err(e) => return e,
+        Ok(_)  => ()
+      }
+    }
+  };
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+
+|ext:zttg[] (<<ext:zttg>>), for a register group
+|0.1
+|Draft
+|===
