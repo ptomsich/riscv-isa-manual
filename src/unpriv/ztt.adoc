@@ -8,7 +8,7 @@ It may be decoupled from the hart; <<ztt-memory-model>> specifies how its memory
 [#norm:Ztt_no_vstate]#The extensions do not depend on the vector extensions: they add no vector state and read none.#
 Their registers are separate from the vector registers and from those of ext:zvt[] (<<ztt-zvt>>).
 
-[#norm:Ztt_enc]#Instructions that name datatypes, and the partial-tile forms of the loads and stores, use the 64-bit encoding of ext:zl[]; the other instructions use 32-bit encodings in the OP-VE major opcode.#
+[#norm:Ztt_enc]#Instructions that name datatypes, and the loads and stores of operand matrices, use the 64-bit encoding of ext:zl[]; the other instructions, and short forms of frequent ones, use 32-bit encodings in the OP-VE major opcode.#
 
 The family consists of ext:ztt[], subsets of it for smaller matrix units, and extensions that add datatype combinations (<<ztt-extensions>>).
 Supervisor management of Ztt contexts is specified by ext:ssttctx[] in the privileged architecture.
@@ -419,16 +419,112 @@ NOTE: The images are architectural so that debuggers, and contexts migrated betw
 [[ztt-encoding-32]]
 ==== 32-Bit Instructions
 
-// Untyped instructions in OP-VE with funct3 = 100: memory with the element size in the
-// encoding, zeroing, element and row moves (decision 2).
-// mdiscard is in the one-operand bank.
-// The same space holds the context-management instructions of ext:ssttctx[], which are
-// specified in the privileged architecture; this section only reserves their encodings.
+[#norm:Ztt_enc32]#The 32-bit instructions use the OP-VE major opcode with `funct3` = 100, in the R-type layout of <<ztt-enc32-fig>>; `funct7` selects the instruction (<<ztt-enc32-table>>).#
+[#norm:Ztt_enc32_rsv]#A field that an instruction does not use is reserved and must be zero; an instruction in which it is not raises an illegal-instruction exception.#
+
+[[ztt-enc32-fig]]
+.32-bit instruction format.
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'md/rd' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: 'ms1/rs1' },
+    { bits: 5, name: 'ms2/rs2' },
+    { bits: 7, name: 'funct7' }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+[[ztt-enc32-table]]
+.32-bit instructions.
+[%autowidth,float="center",align="center",cols="<,<,<",options="header"]
+|===
+|`funct7` |Instructions |Other fields
+|`00` _s_ _t_ `shape` |Loads and stores of matrix registers |`md`, base address `rs1`, leading dimension `rs2`
+|`010` _s_ _t_ `ew` |Loads and stores of accumulator registers |`md`, base address `rs1`, leading dimension `rs2`
+|`0110000` |One-register instructions |<<ztt-enc32-one-table>>
+|`0110001` |insn:mid.row[], insn:mid.col[] |`md`; bit 24 set for insn:mid.col[], `ew` in bits 23:22, `lg` in bits 21:20
+|`011001` _x_ |_Reserved_ |
+|`01101` `ew` |insn:mmv.x.m[] |`rd`, `ms1`, element number `rs2`
+|`01110` `ew` |insn:mmv.m.x[] |`md`, value `rs1`, element number `rs2`
+|`01111` _xx_ |Reserved for ext:ssttctx[] |
+|`10` _n_ `tc` |Short forms of insn:mmacc[] (_n_ = 0) and insn:mmaccn[] (_n_ = 1) |<<ztt-enc32-mm-table>>
+|`11` _xxxxx_ |_Reserved_ |
+|===
+
+[#norm:Ztt_enc32_ew]#`ew` gives an element width of 8{nbsp}{times}{nbsp}2^`ew`^ bits, and `lg` = log~2~ _G_ a group of _G_ registers; `lg` = 3 is reserved.#
+
+[#norm:Ztt_enc32_ls]#A 32-bit load or store is a short form of the full-tile load or store of the 64-bit memory format (<<ztt-encoding-64>>) with the same operands.
+_s_ is set for a store and _t_ for a transposing form; `shape` gives the element size and the group of a matrix-register operand (<<ztt-enc32-shape-table>>), and `ew` the element size of an accumulator form.#
+
+[[ztt-enc32-shape-table]]
+.Element size and group of a 32-bit load or store of matrix registers.
+[%autowidth,float="center",align="center",cols="^,<,^",options="header"]
+|===
+|`shape` |Element size |_G_
+|000 |`e8` |1
+|001 |`e8` |2
+|010 |`e8` |4
+|011 |`e16` |1
+|100 |`e16` |2
+|101 |`e16` |4
+|110 |`e32` |2
+|111 |`e64` |4
+|===
+
+[[ztt-enc32-one-table]]
+.One-register instructions, `funct7` = 0110000.
+[%autowidth,float="center",align="center",cols="^,<,<,<",options="header"]
+|===
+|Bits 24:20 |Instruction |`md` |`rs1`
+|00000 |insn:mzero[] |Accumulator register |0
+|00001 |insn:mdiscard[] |0 |0
+|00100 |insn:mls.1r[] |Matrix register |Base address
+|00101 |insn:mss.1r[] |Matrix register |Base address
+|00110 |insn:mla.1r[] |Accumulator register |Base address
+|00111 |insn:msa.1r[] |Accumulator register |Base address
+|010 `ew` |insn:mfill[] |Matrix register |Value
+|===
+
+The other values of bits 24:20 are reserved.
+
+[#norm:Ztt_enc32_mm]#A short form of a matrix multiply holds the accumulator register number in bits 9:7, `lg` in bits 11:10, and the sources in `ms1` and `ms2`.
+It is the insn:mmacc[] or insn:mmaccn[] with the datatypes that `tc` selects (<<ztt-enc32-mm-table>>), both sources in groups of _G_ = 2^`lg`^ registers, `sat` = 0, and `rm` = DYN for a floating-point destination, and it raises the exceptions of that instruction.#
+[#norm:Ztt_enc32_mm_n]#A short form of insn:mmaccn[] takes only the codes 1000 to 1011.#
+
+[[ztt-enc32-mm-table]]
+.Datatypes of the short forms of the matrix multiplies.
+[%autowidth,float="center",align="center",cols="^,<,<,<",options="header"]
+|===
+|`tc` |A |B |C
+|0000 |INT8 |INT8 |INT32
+|0001 |UINT8 |INT8 |INT32
+|0010 |INT8 |UINT8 |INT32
+|0011 |UINT8 |UINT8 |UINT32
+|0100 |INT16 |INT16 |INT32
+|0101 |INT4 |INT4 |INT32
+|0110 |UINT4 |INT4 |INT32
+|0111 |INT2 |INT2 |INT32
+|1000 |BF16 |BF16 |FP32
+|1001 |FP16 |FP16 |FP32
+|1010 |FP32 |FP32 |FP32
+|1011 |TF32 |TF32 |FP32
+|1100 |E4M3 |E4M3 |FP32
+|1101 |E4M3 |E5M2 |FP32
+|1110 |E2M1 |E2M1 |FP32
+|1111 3+|_Reserved_
+|===
+// OPEN: the datatype combinations of the short forms.
+
+A short form has no mnemonic of its own; an assembler selects it for an instruction that it encodes.
+
+NOTE: The 32-bit encodings serve the instructions that name no datatype and the most frequent of the others: a matrix-multiply kernel loads, clears, multiplies, and stores with 32-bit instructions.
 
 [[ztt-encoding-64]]
 ==== 64-Bit Instructions
 
-[#norm:Ztt_enc64]#Typed instructions and the partial-tile forms of the loads and stores use the 64-bit instruction encoding of the long-instruction extension (Zl), shown in <<ztt-enc64-fig>>.#
+[#norm:Ztt_enc64]#Typed instructions and the loads and stores of operand matrices use the 64-bit instruction encoding of the long-instruction extension (Zl), shown in <<ztt-enc64-fig>>.#
 The first word is laid out as an R-type instruction, with the destination and source register numbers at their standard positions; the second word carries the operand specifiers of a typed instruction.
 
 [[ztt-enc64-fig]]
@@ -531,10 +627,10 @@ An index selects a slot of a matrix register (<<ztt-slots>>) or a part of an acc
 ], config:{lanes: 2, hspace: 1024}}
 ....
 
-[#norm:Ztt_enc64_mem]#The memory format, `fmt` = 011, holds the partial-tile forms of the loads and stores (<<ztt-memory-partial>>), with the register transferred in `md`, the base address in `rs1`, and the descriptor in `rs2`.
+[#norm:Ztt_enc64_mem]#The memory format, `fmt` = 011, holds the loads and stores of operand matrices, with the register transferred in `md`, the base address in `rs1`, and the leading dimension, or the descriptor of a partial-tile form (<<ztt-memory-partial>>), in `rs2`.
 Bits 43:41 hold the element-size code `es` (<<ztt-esize-table>>), and bits 40:39 hold `lg` = log~2~ _G_ for the group of a matrix-register operand; `lg` = 3 is reserved, as is a nonzero `lg` in an accumulator form.
 Bits 38:37 and 63:44 are reserved.#
-[#norm:Ztt_enc64_mem_op]#In `op`, bit 25 is set for a store, bit 26 for a transposing form, and bit 27 for an accumulator form; bits 31:28 are zero.#
+[#norm:Ztt_enc64_mem_op]#In `op`, bit 25 is set for a store, bit 26 for a transposing form, bit 27 for an accumulator form, and bit 28 for a partial-tile form; bits 31:29 are zero.#
 
 [[ztt-enc64-mem-fig]]
 .Memory format.
@@ -556,8 +652,6 @@ Bits 38:37 and 63:44 are reserved.#
     { bits: 20, name: '00000000000000000000' }
 ], config:{lanes: 2, hspace: 1024}}
 ....
-// OPEN: the 32-bit loads and stores are to use the same element-size codes, `lg`, and
-// operation bits.
 
 [[ztt-enc-columns]]
 ==== Operand Columns
@@ -643,7 +737,7 @@ An operation is defined for certain combinations of the datatypes of its operand
 |Compares |Sources of one datatype of insn:madd[], and the unsigned integer datatype of their width as the destination
 |Bitwise operations, insn:mrol[] |One unsigned integer datatype
 |insn:mcvt[] |Any two datatypes, with the exceptions of <<ztt-ops-mcvt>>
-|32-bit instructions |None; loads, stores, and moves carry an element size (<<ztt-esize-table>>)
+|Loads, stores, insn:mfill[], index matrices, and element moves |None; they carry an element size (<<ztt-esize-table>>)
 |===
 
 NOTE: Software thus tests for extensions and not for single combinations.
@@ -671,7 +765,8 @@ NOTE: A reserved encoding traps so that software cannot depend on its behavior b
 
 Ztt loads and stores transfer a matrix register, a register group, or an accumulator register between memory and the hart.
 The whole-register forms transfer the register image; the other forms transfer the operand matrix (<<ztt-operands>>) row by row.
-Their encodings are 32-bit (<<ztt-encoding-32>>), except for the partial-tile forms, which use the 64-bit format (<<ztt-encoding-64>>).
+The whole-register forms are 32-bit instructions (<<ztt-encoding-32>>).
+The other forms use the 64-bit memory format (<<ztt-encoding-64>>); the full-tile forms of the common element sizes and groups also have 32-bit short forms.
 
 [[ztt-memory-encoding]]
 ==== Element Sizes
@@ -695,7 +790,7 @@ Their encodings are 32-bit (<<ztt-encoding-32>>), except for the partial-tile fo
 [#norm:Ztt_ls_esize_rsv]#The code 111 is reserved.#
 
 [#norm:Ztt_ls_p6]#`p6` transfers 6-bit elements stored four in three bytes in memory, element _k_ of a row occupying bits 6__k__ + 5 to 6__k__ of the row, numbering the bits of a row from bit 0 of its first byte; in a matrix register each element occupies an 8-bit container as in <<ztt-fp-formats>>.#
-[#norm:Ztt_ls_esize_reg]#The element size determines the shape of the operand matrix and the size of the register group, as for an operand of that element width.#
+[#norm:Ztt_ls_esize_reg]#A matrix-register operand of a load or store is a group of _G_ = 1, 2, or 4 registers (<<ztt-groups>>), given in the encoding, and is a matrix of _N_ rows and _G_{nbsp}{times}{nbsp}RLEN/__w__ columns for the element size _w_, with _w_ = 8 for `p6`.#
 
 [[ztt-memory-addressing]]
 ==== Strided and Transposing Forms
