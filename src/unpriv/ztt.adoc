@@ -557,7 +557,7 @@ The first word is laid out as an R-type instruction, with the destination and so
 |===
 |Bits |Field |Contents
 |11:7 |`md` |Destination register
-|14:12 |`fmt` |Format: 001 for the matrix multiplies
+|14:12 |`fmt` |Format: 001 matrix multiply, 010 conversion, 011 memory, 100 elementwise
 |19:15 |`ms1`/`rs1` |First source register
 |24:20 |`ms2`/`rs2` |Second source register
 |31:25 |`op` |Operation within the format
@@ -652,6 +652,69 @@ Bits 38:37 and 63:44 are reserved.#
     { bits: 20, name: '00000000000000000000' }
 ], config:{lanes: 2, hspace: 1024}}
 ....
+
+[#norm:Ztt_enc64_ew]#The elementwise format, `fmt` = 100, holds the elementwise operations, with the compares (<<ztt-ops-elementwise>>), and the bitwise operations (<<ztt-ops-bitwise>>).
+Bits 31:26 of `op` hold the operation `fn` (<<ztt-enc64-fn-table>>), and bit 25, `a`, is set where the destination and the first source are accumulator registers (<<ztt-ops-acc>>).#
+[#norm:Ztt_enc64_ew_form]#Bits 60:58 hold `form`, which selects the second source (<<ztt-enc64-form-table>>), and `t2` names its datatype, which for a scalar operand is that of the source it replaces.
+An immediate has its bits 4:0 in bits 24:20 and its bits 6:5 in bits 38:37, and bits 63:61 hold the slot index `s2` of a second source that is a slot (<<ztt-slots>>).#
+[#norm:Ztt_enc64_ew_rsv]#A value of `fn` or `form` that is not listed is reserved, as is a `form` that the operation does not take.
+Bits 38:37 are reserved without an immediate, and bits 63:61 where the second source is not a slot.#
+// OPEN: the elementwise format is a proposal.  To confirm: t2 for a scalar operand, which
+// repeats a datatype that the operation implies; the split of the immediate; mod as a
+// value of fn; and the format of the reductions, which this format does not hold.
+
+[[ztt-enc64-ew-fig]]
+.Elementwise format.
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100', attr: ['EW'] },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: 'ms2/rs2/imm[4:0]' },
+    { bits: 1, name: 'a' },
+    { bits: 6, name: 'fn' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: 'imm[6:5]' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: 'rm' },
+    { bits: 1, name: 'sat' },
+    { bits: 5, name: 't1' },
+    { bits: 5, name: 't2' },
+    { bits: 3, name: 'form' },
+    { bits: 3, name: 's2' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
+[[ztt-enc64-form-table]]
+.Second source of an elementwise instruction.
+[%autowidth,float="center",align="center",cols="^,<",options="header"]
+|===
+|`form` |Second source
+|000 |A register of the class of the destination, or none
+|001 |X register `rs2`, as a scalar operand
+|010 |Immediate, as a scalar operand
+|100 |Matrix-register operand that holds a tile, with `a` set (<<ztt-ops-acc>>)
+|110 |Row broadcast of a matrix-register operand, with `a` set
+|111 |Column broadcast of a matrix-register operand, with `a` set
+|011, 101 |_Reserved_
+|===
+
+[[ztt-enc64-fn-table]]
+.Operations of the elementwise format, in the order of their `fn`.
+[%autowidth,float="center",align="center",cols="<,<",options="header"]
+|===
+|`fn` |Operations
+|000000 to 000111 |insn:madd[], insn:msub[], insn:mmul[], insn:msmul[], insn:mmin[], insn:mmax[], insn:mneg[], insn:mabs[]
+|001000 |insn:mfma[]
+|001010, 001011 |insn:mldexp[], without and with `mod`
+|010000 to 010010 |insn:mexp2[], insn:mrec[], insn:mrsqrt[]
+|011000 to 011101 |insn:mcmpeq[], insn:mcmpne[], insn:mcmple[], insn:mcmpgt[], insn:mcmplt[], insn:mcmpge[]
+|100000 to 100110 |insn:mand[], insn:mandnot[], insn:mor[], insn:mornot[], insn:mxor[], insn:mbsel[], insn:mrol[]
+|===
 
 [[ztt-enc-columns]]
 ==== Operand Columns
