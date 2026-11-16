@@ -1,0 +1,155 @@
+<<<
+[#insns-mmax,reftext="Matrix Elementwise Maximum"]
+==== insn:mmax[]
+
+Synopsis::
+Elementwise maximum
+
+Mnemonic::
+insn:mmax[_md_._td_, _ms1_._t1_, _ms2_._t2_] +
+insn:mmax[_md_._td_, _ms1_._t1_, _rs2_] +
+insn:mmax[_md_._td_, _ms1_._t1_, _imm_] +
+insn:mmax[_accd_._td_, _accs_._t1_, _rs2_] +
+insn:mmax[_accd_._td_, _accs_._t1_, _imm_]
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100', attr: ['EW'] },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: 'ms2/rs2/imm[4:0]' },
+    { bits: 1, name: 'a' },
+    { bits: 6, name: '000101', attr: ['MMAX'] },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: 'imm[6:5]' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: '000' },
+    { bits: 1, name: '0' },
+    { bits: 5, name: 't1' },
+    { bits: 5, name: 't2' },
+    { bits: 3, name: 'form' },
+    { bits: 3, name: '000' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
+[%autowidth]
+[%header,cols="^,^,<"]
+|===
+|`a` |`form` |Second source
+|0 |000 |Matrix register _ms2_
+|0, 1 |001 |X register _rs2_
+|0, 1 |010 |Immediate _imm_
+|===
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _ms1_ | input | First source: a matrix register, or an accumulator register with `a` set
+| _ms2_, _rs2_, _imm_ | input | Second source, as `form` selects
+| _md_ | output | Destination, of the class of _ms1_
+|===
+
+Description::
+[#norm:mmax_op]#insn:mmax[] writes the larger of _a_ and _b_ to each element of the destination, for the corresponding elements _a_ of the first source and _b_ of the second (<<ztt-ops-arith>>).
+A scalar operand supplies _b_ for every element (<<ztt-ops-elementwise>>).#
++
+[#norm:mmax_types]#The operands have one datatype.
+On matrix registers, each an _N_ {times} RLEN/__w__ matrix, it is an integer datatype or a floating-point datatype other than E8M0 and TF32; on accumulator registers, it is INT32, UINT32, or FP32.#
++
+[#norm:mmax_fp]#For a floating-point datatype, insn:mmax[] is the maximumNumber operation of IEEE 754-2019, as insn:fmax.s[], and the floating-point exception flags accrue in csr:fflags[].#
+
+Exceptions::
+[#norm:mmax_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* _td_ is a floating-point datatype, and ext:f[] is not implemented, or csr:mstatus[fs] is Off, or V=1 and csr:vsstatus[fs] is Off.
+* _td_ is FP64 and ext:d[] is not implemented.
+* _td_, _t1_, and _t2_ are not one datatype that insn:mmax[] supports for its operands, or name a reserved type code.
+* `form` is not listed for `a`.
+* `a` is set, and ext:zttc[] is not implemented or the register number of an accumulator operand is not less than _R_.
+* `form` is 001 and the element width is greater than XLEN, or `form` is 010 and _td_ is a floating-point datatype.
+* `rm` or `sat` is not 0.
+* A reserved field, bits 38:37 without an immediate or bits 63:61, is not 0.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec64 = MMAX(a, md, ms1, f2, td, rm, sat, t1, t2, form, s2, ih)
+  <-> s2 @ form @ t2 @ t1 @ sat @ rm @ td @ ih @ ZTT_ZLMAJ @ 0b11
+    @ 0b000101 @ a @ f2 @ ms1 @ 0b100 @ md @ ZTT_ZLOP @ 0b11111
+
+function clause execute MMAX(a, md, ms1, f2, td, rm, sat, t1, t2, form, s2, ih) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  /* A floating-point datatype needs F, D for FP64, and FS. */
+  if not(ztt_fp_enabled(td)) then return Illegal_Instruction();
+  /* One datatype of the arithmetic operations: an integer datatype or a floating-point
+     datatype other than E8M0 and TF32; INT32, UINT32, or FP32 on accumulators. */
+  if t1 != td | t2 != td | not(ztt_ew_arith_type(a, td)) then return Illegal_Instruction();
+  if not(mmax_form(a, form)) then return Illegal_Instruction();
+  /* An operand is one matrix register or, with a set, an accumulator register;
+     ztt_ew_operand returns None() for an accumulator operand without Zttc and for
+     an accumulator register number of R or more.  f2 and ih hold the second source;
+     ztt_ew_source2 returns None() for a scalar wider than XLEN, a floating-point
+     immediate, a slot index out of range, a group without Zttg or one that is not
+     aligned, and a reserved field that is not 0. */
+  let dst  : option(ztt_operand) = ztt_ew_operand(a, md, td);
+  let src1 : option(ztt_operand) = ztt_ew_operand(a, ms1, t1);
+  let src2 : option(ztt_source2) = ztt_ew_source2(a, form, f2, ih, t2, s2);
+  if dst == None() | src1 == None() | src2 == None() then return Illegal_Instruction();
+  if rm != 0b000 | sat != 0b0 then return Illegal_Instruction();
+
+  let N = ztt_N();
+  /* A matrix register holds RLEN/w columns, and an accumulator register N. */
+  let C = if a == 0b1 then N else ztt_RLEN() / ztt_type_width(td);
+  let x = ztt_read_operand(the(src1), N, C);
+  /* A scalar operand is every element. */
+  let y = ztt_read_source2(the(src2), N, C);
+  var flags : bits(5) = zeros();
+  foreach (r from 0 to (N - 1)) {
+    foreach (c from 0 to (C - 1)) {
+      /* The larger value; maximumNumber for a floating-point datatype. */
+      let (e, f) = ztt_max(td, ztt_element(x, r, c), ztt_element(y, r, c));
+      ztt_write_element(the(dst), r, c, e);
+      flags = flags | f;
+    }
+  };
+  accrue_fflags(flags);
+  ztt_set_dirty();
+  RETIRE_SUCCESS
+}
+
+function mmax_form(a : bits(1), form : bits(3)) -> bool =
+  match (a, form) {
+    (0b0, 0b000) => true,    /* matrix register */
+    (_,   0b001) => true,    /* X register */
+    (_,   0b010) => true,    /* immediate */
+    _            => false
+  }
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+
+|ext:zttc[] (<<ext:zttc>>), for accumulator operands
+|0.1
+|Draft
+|===

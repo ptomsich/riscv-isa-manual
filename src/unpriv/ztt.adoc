@@ -2449,6 +2449,8 @@ include::ztt-insns/mmacc.adoc[]
 
 include::ztt-insns/mmaccn.adoc[]
 
+include::ztt-insns/mmax.adoc[]
+
 include::ztt-insns/mmul.adoc[]
 
 include::ztt-insns/mmv-m-x.adoc[]
