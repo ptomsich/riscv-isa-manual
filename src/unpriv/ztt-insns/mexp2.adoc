@@ -1,0 +1,109 @@
+<<<
+[#insns-mexp2,reftext="Matrix Elementwise Power of Two"]
+==== insn:mexp2[]
+
+Synopsis::
+Elementwise 2^_x_^
+
+Mnemonic::
+insn:mexp2[_md_._td_, _ms1_._t1_[, sat\]]
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100', attr: ['EW'] },
+    { bits: 5, name: 'ms1' },
+    { bits: 5, name: '00000' },
+    { bits: 1, name: '0' },
+    { bits: 6, name: '010000', attr: ['MEXP2'] },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 5, name: 'td' },
+    { bits: 3, name: '000' },
+    { bits: 1, name: 'sat' },
+    { bits: 5, name: 't1' },
+    { bits: 5, name: '00000' },
+    { bits: 3, name: '000' },
+    { bits: 3, name: '000' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _ms1_ | input | A matrix register
+| _md_ | output | A matrix register
+|===
+
+Description::
+[#norm:mexp2_op]#insn:mexp2[] writes 2^__x__^ to each element of matrix register _md_, for the corresponding element _x_ of matrix register _ms1_.
+Both are _N_ {times} RLEN/__w__ matrices of one datatype, which is FP16, BF16, or FP32.#
++
+[#norm:mexp2_round]#A result that is not representable is one of the two representable values adjacent to it, and a result beyond the largest finite value is +{inf}, or the largest finite value with `sat` set (<<ztt-ops-mexp2>>).#
+[#norm:mexp2_fflags]#Floating-point exception flags accrue in csr:fflags[].#
+
+Exceptions::
+[#norm:mexp2_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* ext:f[] is not implemented, or csr:mstatus[fs] is Off, or V=1 and csr:vsstatus[fs] is Off.
+* _td_ is not FP16, BF16, or FP32, or _t1_ is not _td_.
+* `a` is set, or `rm`, `t2`, or `form` is not 0.
+* A reserved field, bits 24:20, 38:37, or 63:61, is not 0.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec64 = MEXP2(md, ms1, td, sat, t1)
+  <-> 0b000 @ 0b000 @ 0b00000 @ t1 @ sat @ 0b000 @ td @ 0b00 @ ZTT_ZLMAJ @ 0b11
+    @ 0b010000 @ 0b0 @ 0b00000 @ ms1 @ 0b100 @ md @ ZTT_ZLOP @ 0b11111
+
+function clause execute MEXP2(md, ms1, td, sat, t1) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  /* A floating-point datatype needs F and FS. */
+  if not(ztt_fp_enabled(td)) then return Illegal_Instruction();
+  /* FP16, BF16, or FP32. */
+  if not(td == 0b11000 | td == 0b11001 | td == 0b11100) | t1 != td
+  then return Illegal_Instruction();
+  let N = ztt_N();
+  let w = ztt_type_width(td);
+  let C = ztt_RLEN() / w;
+  var flags : bits(5) = zeros();
+  foreach (r from 0 to (N - 1)) {
+    foreach (c from 0 to (C - 1)) {
+      /* 2^x if it is representable, and otherwise an implementation-defined choice
+         of the two adjacent values, which depends only on x and td; sat selects
+         the largest finite value over +inf. */
+      let (e, f) = ztt_exp2(td, ztt_read_m_bits(ms1, w, r, c), sat);
+      ztt_write_m_bits(md, w, r, c, e);
+      flags = flags | f;
+    }
+  };
+  accrue_fflags(flags);
+  ztt_set_dirty();
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+|===
