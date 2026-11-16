@@ -1,0 +1,84 @@
+<<<
+[#insns-mfill,reftext="Matrix Fill"]
+==== insn:mfill[]
+
+Synopsis::
+Fill a matrix register with a scalar
+
+Mnemonic::
+insn:mfill[].__es__{nbsp}__md__, _rs1_
++
+_es_ is `e8`, `e16`, `e32`, or `e64`, as in `mfill.e16`.
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: 'rs1' },
+    { bits: 2, name: 'ew' },
+    { bits: 3, name: '010', attr: ['MFILL'] },
+    { bits: 7, name: '0110000' }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _rs1_ | input | The value
+| _md_ | output | A matrix register
+|===
+
+Description::
+[#norm:mfill_op]#insn:mfill[] writes the low _w_ bits of X register _rs1_ to every element of matrix register _md_, an _N_ {times} RLEN/__w__ matrix, for the element width _w_ = 8{nbsp}{times}{nbsp}2^`ew`^ bits.#
++
+A register group is filled by one insn:mfill[] for each of its registers, and a value narrower than 8 bits by its replication in a byte (<<ztt-ops-const>>).
+
+Exceptions::
+[#norm:mfill_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* `ew` is 3 (`e64`) and XLEN = 32.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec = MFILL(md, rs1, ew)
+  <-> 0b0110000 @ 0b010 @ ew @ rs1 @ 0b100 @ md @ 0b1110111
+
+function clause execute MFILL(md, rs1, ew) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  let w = 8 * 2 ^ unsigned(ew);
+  if w > xlen then return Illegal_Instruction();
+  let N = ztt_N();
+  let C = ztt_RLEN() / w;
+  let v = X(rs1)[w - 1 .. 0];
+  foreach (r from 0 to (N - 1)) {
+    foreach (c from 0 to (C - 1)) {
+      ztt_write_m_bits(md, w, r, c, v);   /* element (r, c) of width w */
+    }
+  };
+  ztt_set_dirty();
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+|===
