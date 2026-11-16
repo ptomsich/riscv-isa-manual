@@ -2376,6 +2376,8 @@ include::ztt-insns/mmacc.adoc[]
 
 include::ztt-insns/mmaccn.adoc[]
 
+include::ztt-insns/mzero.adoc[]
+
 [[ztt-encoding-map]]
 === Encoding Map
 

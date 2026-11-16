@@ -1,0 +1,77 @@
+<<<
+[#insns-mzero,reftext="Zero Accumulator"]
+==== insn:mzero[]
+
+Synopsis::
+Zero an accumulator register
+
+Mnemonic::
+insn:mzero[_md_]
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: '00000' },
+    { bits: 5, name: '00000', attr: ['MZERO'] },
+    { bits: 7, name: '0110000' }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _md_ | output | An accumulator register
+|===
+
+Description::
+[#norm:mzero_op]#insn:mzero[] writes zero to every element of accumulator register _md_.#
+An accumulator pair is cleared by one insn:mzero[] for each of its registers.
+
+Exceptions::
+[#norm:mzero_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* _md_ is not less than _R_.
+* Bits 19:15 are not 0.
+
+Operation::
+[source,sail]
+--
+mapping clause encdec = MZERO(md)
+  <-> 0b0110000 @ 0b00000 @ 0b00000 @ 0b100 @ md @ 0b1110111
+
+function clause execute MZERO(md) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  if unsigned(md) >= ztt_R() then return Illegal_Instruction();
+  let N = ztt_N();
+  foreach (i from 0 to (N - 1)) {
+    foreach (j from 0 to (N - 1)) {
+      ztt_write_acc(md, 0b01000, i, j, zeros(32));   /* a 32-bit element */
+    }
+  };
+  ztt_set_dirty();
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+|===
