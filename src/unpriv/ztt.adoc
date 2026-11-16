@@ -286,7 +286,7 @@ NOTE: Integer RMM is the rounding of the requantization in common inference libr
 [#norm:Ztt_sat_int]#For an integer destination datatype, `sat` = 1 clamps a result that is out of range to the nearest representable value, and `sat` = 0 wraps it modulo 2^_n_^.#
 [#norm:Ztt_sat_fp2int]#A conversion from a floating-point to an integer datatype always saturates as in F, and raises NV when the source is NaN or out of range; `sat` = 0 is reserved for it.#
 
-[#norm:Ztt_sat_fp]#For a floating-point destination datatype, `sat` = 1 replaces an infinite result by the largest finite value of the same sign; with `sat` = 0 an infinite result is infinity, or the canonical NaN for a datatype without infinity.#
+[#norm:Ztt_sat_fp]#For a floating-point destination datatype, `sat` = 1 replaces an infinite result, whether it overflowed or is exact, by the largest finite value of the same sign; with `sat` = 0 an infinite result is infinity, or the canonical NaN for a datatype without infinity.#
 Overflow raises OF and NX in either case.
 [#norm:Ztt_sat_nonan]#E2M1, E2M3, and E3M2 always saturate, and `sat` = 0 is reserved for them; a NaN converts to their largest positive finite value and raises NV.#
 [#norm:Ztt_sat_e8m0]#For E8M0, a zero, negative, or NaN value converts to `0xff` and raises NV, and a positive value that rounds below 2^−127^ converts to 2^−127^ and raises UF and NX.#
@@ -865,6 +865,7 @@ The implementation discloses the algorithm, the values of its parameters, and wh
 
 [#norm:Ztt_num_acc]#Each group then updates the element as C~__i__,__j__~ {leftarrow} round~rm~(C~__i__,__j__~ + _S_), rounding as selected by `rm`.#
 [#norm:Ztt_num_order]#The groups of a step update the element one at a time, in increasing order of _k_, so each group uses the C~__i__,__j__~ that the preceding group wrote.#
+[#norm:Ztt_num_sat]#With `sat` = 1, every value that the model rounds to the datatype of C, which is _S_ when `rnd` is `rm` and each update of C~__i__,__j__~, is saturated (<<ztt-saturation>>) before it is used.#
 [#norm:Ztt_num_acc_c]#When the reduction takes C~__i__,__j__~, _S_ already includes it, `rnd` is `xct`, and the group updates the element as C~__i__,__j__~ {leftarrow} round~rm~(_S_).#
 
 [#norm:Ztt_num_disclose]#An implementation discloses its (_P_, `psm`, `rnd`) for each combination of source element widths and C datatype that it supports.
@@ -1177,7 +1178,7 @@ TF32 and FP32 sources occupy two registers each, and so require ext:zttg[] (<<ex
 |===
 
 [#norm:Ztt_mmacc_int]#For integer datatypes, C is replaced by the exact sum of C and the products, reduced modulo 2^__n__^, where _n_ is the width of the datatype of C; `rm` and `sat` values other than 0 are reserved.#
-[#norm:Ztt_mmacc_fp]#For floating-point datatypes, C is computed as specified in <<ztt-matmul-numerics>>, with saturation as selected by `sat` (<<ztt-saturation>>).#
+[#norm:Ztt_mmacc_fp]#For floating-point datatypes, C is computed as specified in <<ztt-matmul-numerics>>, which applies `rm` and `sat`.#
 
 [#norm:Ztt_mzero]#insn:mzero[] writes zero to every element of an accumulator register.#
 It is a 32-bit instruction (<<ztt-encoding-32>>).
