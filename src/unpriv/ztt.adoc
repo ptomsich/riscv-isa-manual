@@ -296,7 +296,7 @@ Integer saturation is not reported: it is requested by the destination specifier
 [[ztt-operands]]
 === Mapping of Matrix Elements to Register State
 
-A matrix-register operand is a matrix of _N_ rows that occupies part of a matrix register, one register, or several:
+A matrix-register operand is a matrix of _N_ rows that occupies a slot of a matrix register, one register, or a group of registers:
 
 [[ztt-shapes-table]]
 .Matrix-register operands of element width _w_.
@@ -310,6 +310,10 @@ A matrix-register operand is a matrix of _N_ rows that occupies part of a matrix
 
 [#norm:Ztt_G]#_G_ denotes the number of matrix registers that an operand occupies: 1 for a single register, 2 or 4 for a register group, and the fraction _w_/16 for a slot.#
 Which of the three an operand is follows from the instruction and its datatypes (<<ztt-enc-columns>>), as the registers are untyped.
+
+[#norm:Ztt_tile]#A _tile_ is a matrix of _N_ rows and RLEN/16 columns.
+A matrix-register operand of RLEN/16 columns holds one tile: it is a slot for _w_ < 16, one register for _w_ = 16, and a group of _w_/16 registers for _w_ > 16.#
+An accumulator register holds 16__N__/RLEN tiles side by side, its parts (<<ztt-ops-mcvt>>); with RLEN = 16__N__, a tile is an _N_ {times} _N_ matrix, and an accumulator register holds one.
 
 [[ztt-mreg-layout]]
 ==== Matrix Registers
@@ -336,7 +340,7 @@ NOTE: Elements are contiguous along each row, as in the input tiles of ext:zvvmm
 [[ztt-slots]]
 ==== Slots
 
-A slot is a part of a matrix register that holds one matrix of elements narrower than 16 bits, with as many columns as the register has 16-bit elements in a row; a register of 8-bit elements, for example, consists of two slots side by side.
+A slot is a range of the columns of a matrix register that holds one tile (<<ztt-operands>>) of elements narrower than 16 bits; a register of 8-bit elements, for example, consists of two slots side by side.
 
 [#norm:Ztt_slots]#For an element width _w_ < 16, columns _s_{nbsp}{times}{nbsp}RLEN/16 to (__s__ + 1){nbsp}{times}{nbsp}RLEN/16 − 1 form slot _s_ of the register, an _N_ {times} RLEN/16 matrix; a register has 16/__w__ slots.#
 Each slot occupies _w_/16 of a row, and slot 0 begins at byte 0:
@@ -351,7 +355,7 @@ Each slot occupies _w_/16 of a row, and slot 0 begins at byte 0:
 |2 bits |0 |1 |2 |3 |4 |5 |6 |7
 |===
 
-A slot is the matrix-register operand narrower than 16 bits of an instruction whose other operand is an accumulator register, such as a conversion (<<ztt-ops-mcvt>>); with RLEN = 16__N__, it has the shape of an accumulator register.
+A slot is the operand narrower than 16 bits of an instruction whose operands hold a tile, such as a conversion from an accumulator register (<<ztt-ops-mcvt>>).
 An instruction takes a slot only where it encodes a slot index (<<ztt-enc-columns>>).
 
 NOTE: Matrices written into the slots of a register lie side by side in the operand that the register holds, so the result of one matrix multiply feeds the next as a source without a transpose.
@@ -1333,8 +1337,8 @@ mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon
 |insn:mmax[], insn:mmin[] |scalar |ReLU and clamping
 |===
 
-[#norm:Ztt_acc_madd_m]#When the second operand of insn:madd[] is a matrix-register operand, it designates a tile as for insn:mcvt[], and its datatype is one that converts exactly to the accumulator datatype; the sum is rounded once.#
-[#norm:Ztt_bcast]#A broadcast operand is a vector _v_ taken from a matrix-register operand that designates a tile as for insn:mcvt[].
+[#norm:Ztt_acc_madd_m]#When the second operand of insn:madd[] is a matrix-register operand, it holds a tile (<<ztt-operands>>), and its datatype is one that converts exactly to the accumulator datatype; the sum is rounded once.#
+[#norm:Ztt_bcast]#A broadcast operand is a vector _v_ taken from a matrix-register operand that holds a tile (<<ztt-operands>>).
 In the row form, written with the suffix `.row`, _v_ is row 0 of the tile, and element (_i_, _j_) of the result uses _v_~__j__~; in the column form, written `.col`, _v_ is column 0, and element (_i_, _j_) uses _v_~__i__~.#
 
 NOTE: A load with _LD_ = 0 and a column reduction (<<ztt-ops-reduce>>) write a vector to every row, where the row form reads it; a transposing load with _LD_ = 0 and a row reduction write it to every column, where the column form reads it.
@@ -1380,8 +1384,8 @@ Rotates serve hashing, checksums, and the permutation of packed fields.
 
 [#norm:Ztt_red]#insn:mredmax[] and insn:mredmin[] reduce each row or each column of a source of RLEN/16 columns to its largest or smallest element, combine it with one element of the destination, and write the result to every element of that row or column of the destination.
 In the row form, written `.row`, element (_i_, _j_) of the destination becomes the larger or smaller of element (_i_, 0) and the reduction of row _i_ of the source; in the column form, written `.col`, of element (0, _j_) and the reduction of column _j_.#
-[#norm:Ztt_red_operands]#The source is an accumulator register or a matrix-register operand that designates a tile as for insn:mcvt[].
-The destination is a matrix-register operand that designates a tile, or an accumulator register if the source is one, and both have one datatype.
+[#norm:Ztt_red_operands]#The source is an accumulator register or a matrix-register operand that holds a tile (<<ztt-operands>>).
+The destination is a matrix-register operand that holds a tile, or an accumulator register if the source is one, and both have one datatype.
 The source is read in full before the destination is written.#
 [#norm:Ztt_red_fp]#For floating-point datatypes, the reductions are the maximumNumber and minimumNumber operations of IEEE 754-2019, as for insn:mmax[] and insn:mmin[], and raise NV for a signaling NaN.
 An `rm` other than 0 and `sat` are reserved for them.#
@@ -1432,7 +1436,7 @@ Other reductions are composed from these instructions:
 [#norm:Ztt_mcvt]#insn:mcvt[] converts element (_r_, _c_) of its source from the source datatype to element (_r_, _c_) of its destination in the destination datatype.
 Its source and destination are each a matrix-register operand or an accumulator register; the four combinations have separate encodings.#
 
-[#norm:Ztt_mcvt_tile]#Both operands hold _C_ columns (<<ztt-enc-columns>>), and _C_ is RLEN/16 when one is an accumulator register and the other a matrix-register operand.
+[#norm:Ztt_mcvt_tile]#Both operands hold _C_ columns (<<ztt-enc-columns>>), and _C_ is RLEN/16, one tile (<<ztt-operands>>), when one is an accumulator register and the other a matrix-register operand.
 A matrix-register operand of element width _w_ < 16 with _C_ = RLEN/16 is slot _s_ of a register (<<ztt-slots>>).
 An accumulator operand designates an accumulator register, or an accumulator pair for a 64-bit datatype.#
 [#norm:Ztt_mcvt_part]#An accumulator operand converted to or from a matrix-register operand is part _t_ of its register, columns _t_{nbsp}{times}{nbsp}RLEN/16 to (__t__ + 1){nbsp}{times}{nbsp}RLEN/16 − 1.
