@@ -1,0 +1,158 @@
+<<<
+[#insns-mls-st,reftext="Matrix Load, Strided"]
+==== insn:mls.st[]
+
+Synopsis::
+Strided load of a matrix-register operand
+
+Mnemonic::
+insn:mls.st[].__es__{nbsp}__md__``x``__G__, (_rs1_)[, _rs2_] +
+insn:mls.pst[].__es__{nbsp}__md__``x``__G__, (_rs1_), _rs2_
++
+_es_ is an element-size suffix (<<ztt-esize-table>>), as in `mls.st.e16`; ``x``__G__ is omitted for _G_ = 1, and an omitted _rs2_ is `x0`.
+insn:mls.pst[] is the partial-tile variant.
+
+Encoding::
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 5, name: '11111', attr: ['Zl'] },
+    { bits: 2, name: 'zlop' },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '011', attr: ['MEM'] },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 3, name: '000', attr: ['MLS.ST'] },
+    { bits: 1, name: 'p' },
+    { bits: 3, name: '000' },
+    { bits: 2, name: '11', attr: ['Zl'] },
+    { bits: 3, name: 'zlmaj' },
+    { bits: 2, name: '00' },
+    { bits: 2, name: 'lg' },
+    { bits: 3, name: 'es' },
+    { bits: 20, name: '00000000000000000000' }
+], config:{lanes: 2, hspace: 1024}}
+....
+
+`p` is set for insn:mls.pst[].
+The full-tile form also has a 32-bit short form, for the element sizes and groups that `shape` encodes (<<ztt-enc32-shape-table>>):
+
+[wavedrom, , svg]
+....
+{reg:[
+    { bits: 7, name: '1110111', attr: ['OP-VE'] },
+    { bits: 5, name: 'md' },
+    { bits: 3, name: '100' },
+    { bits: 5, name: 'rs1' },
+    { bits: 5, name: 'rs2' },
+    { bits: 3, name: 'shape' },
+    { bits: 4, name: '0000', attr: ['MLS.ST'] }
+], config:{lanes: 1, hspace: 1024}}
+....
+
+Arguments::
+
+[%autowidth]
+[%header,cols="4,2,2"]
+|===
+|Register
+|Direction
+|Definition
+
+| _rs1_ | input | Base address
+| _rs2_ | input | Leading dimension _LD_, in elements; the descriptor for insn:mls.pst[]
+| _md_ | output | A group of _G_ = 2^`lg`^ matrix registers
+|===
+
+Description::
+[#norm:mls_st_op]#insn:mls.st[] writes memory element (_r_, _c_) to element (_r_, _c_) of the operand matrix of _md_, for each of its _N_ rows and _G_{nbsp}{times}{nbsp}RLEN/__w__ columns.
+Memory element (_r_, _c_) is the _w_ bits at bit offset (_r_{nbsp}{times}{nbsp}__LD__ + _c_) {times} _w_ from the base address, where _w_ is the element size (<<ztt-memory-addressing>>).#
++
+[#norm:mls_st_p6]#With `p6`, a 6-bit memory element is written to bits 5:0 of an 8-bit element of the register, whose bits 7:6 are written as zero; the operand matrix has _G_{nbsp}{times}{nbsp}RLEN/8 columns.#
++
+[#norm:mls_st_partial]#insn:mls.pst[] takes a descriptor in _rs2_, loads only the elements below its row count and column count, and writes zero to the others (<<ztt-memory-partial>>).#
+
+Exceptions::
+[#norm:mls_st_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
++
+* csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
+* `es` is 111, or `lg` is 3.
+* _G_ is 2 or 4, and ext:zttg[] is not implemented or _md_ is not a multiple of _G_.
+* A reserved field, bits 31:29, 38:37, or 63:44, is not 0.
+
++
+[#norm:mls_st_mem]#_Load Address Misaligned_ is raised if a loaded element of 8 bits or more is not naturally aligned, or if _LD_ {times} _w_ is not a multiple of 8 for a smaller element size (<<ztt-memory-alignment>>).#
+Access-fault and page-fault exceptions are raised as for a load of the bytes that hold the loaded elements.
+[#norm:mls_st_restart]#A load that raises an exception leaves _md_ unchanged (<<ztt-exceptions>>).#
+
+Operation::
+[source,sail]
+--
+mapping clause encdec64 = MLS_ST(md, rs1, rs2, es, lg, p)
+  <-> 0x00000 @ es @ lg @ 0b00 @ ZTT_ZLMAJ @ 0b11
+    @ 0b000 @ p @ 0b000 @ rs2 @ rs1 @ 0b011 @ md @ ZTT_ZLOP @ 0b11111
+
+/* The short form: a full-tile load of a shape of ztt-enc32-shape-table. */
+mapping clause encdec = MLS_ST(md, rs1, rs2, es, lg, 0b0)
+  <-> 0b0000 @ ztt_shape(es, lg) @ rs2 @ rs1 @ 0b100 @ md @ 0b1110111
+
+mapping ztt_shape : (bits(3), bits(2)) <-> bits(3) = {
+  (0b010, 0b00) <-> 0b000,   /* e8,  G = 1 */
+  (0b010, 0b01) <-> 0b001,   /* e8,  G = 2 */
+  (0b010, 0b10) <-> 0b010,   /* e8,  G = 4 */
+  (0b011, 0b00) <-> 0b011,   /* e16, G = 1 */
+  (0b011, 0b01) <-> 0b100,   /* e16, G = 2 */
+  (0b011, 0b10) <-> 0b101,   /* e16, G = 4 */
+  (0b100, 0b01) <-> 0b110,   /* e32, G = 2 */
+  (0b101, 0b10) <-> 0b111    /* e64, G = 4 */
+}
+
+function clause execute MLS_ST(md, rs1, rs2, es, lg, p) = {
+  if not(ztt_enabled()) then return Illegal_Instruction();
+  if es == 0b111 | lg == 0b11 then return Illegal_Instruction();
+  let G = 2 ^ unsigned(lg);
+  if G > 1 & not(currentlyEnabled(Ext_Zttg)) then return Illegal_Instruction();
+  if unsigned(md) % G != 0 then return Illegal_Instruction();
+  let w  = ztt_esize_mem(es);   /* bits of an element in memory: 6 for p6 */
+  let wr = ztt_esize_reg(es);   /* bits of an element in the register: 8 for p6 */
+  let N = ztt_N();
+  let C = G * ztt_RLEN() / wr;
+  /* A descriptor holds LD and the counts; a count of 0, or one beyond the
+     operand matrix, selects every row or column. */
+  let (ld, rows, cols) : (int, int, int) =
+    if p == 0b1 then ztt_descriptor(X(rs2), N, C) else (unsigned(X(rs2)), N, C);
+
+  /* Every element is read first: an exception leaves md unchanged. */
+  var x : ztt_matrix = ztt_matrix_zeros(N, C);
+  foreach (r from 0 to (rows - 1)) {
+    foreach (c from 0 to (cols - 1)) {
+      /* Memory element (r, c): w bits at bit offset (r * LD + c) * w from X(rs1),
+         modulo 2^XLEN.  Err() carries a misaligned, access-fault, or page-fault
+         exception. */
+      match ztt_load_element(X(rs1), ld, r, c, w) {
+        Err(e) => return e,
+        Ok(v)  => x = ztt_set_element(x, r, c, zero_extend(v))
+      }
+    }
+  };
+  ztt_write_m(md, G, wr, x);    /* the elements that were not loaded are zero */
+  ztt_set_dirty();
+  RETIRE_SUCCESS
+}
+--
+
+Included in::
+[%header,cols="4,2,2"]
+|===
+|Extension
+|Minimum version
+|Lifecycle state
+
+|ext:ztte[] (<<ext:ztte>>)
+|0.1
+|Draft
+
+|ext:zttg[] (<<ext:zttg>>), for a register group
+|0.1
+|Draft
+|===

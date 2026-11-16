@@ -2370,6 +2370,8 @@ A single pass over blocks of keys computes S and dP once, but loads, adds to, an
 
 include::ztt-insns/mcvt.adoc[]
 
+include::ztt-insns/mls-st.adoc[]
+
 include::ztt-insns/mmacc.adoc[]
 
 include::ztt-insns/mmaccn.adoc[]
