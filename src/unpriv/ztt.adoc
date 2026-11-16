@@ -2372,6 +2372,8 @@ include::ztt-insns/mcvt.adoc[]
 
 include::ztt-insns/mls-st.adoc[]
 
+include::ztt-insns/mls-tst.adoc[]
+
 include::ztt-insns/mmacc.adoc[]
 
 include::ztt-insns/mmaccn.adoc[]
