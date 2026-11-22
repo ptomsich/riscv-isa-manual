@@ -275,7 +275,7 @@ It takes the integer encodings when the source and destination datatypes are all
 The floating-point encodings are those of <<norm:dyn_round_enc>>, with 101 assigned to round to odd; the integer encodings 000 to 011 are those of csr:vxrm[].
 [#norm:Ztt_rm_int_ext]#The integer encodings RMM, RTZ, and RUP round to nearest with ties away from zero, toward zero, and toward +{inf}, respectively.#
 
-NOTE: Integer RMM is the rounding of the requantization in common inference libraries, so a right shift by insn:mldexp[] can match them exactly.
+NOTE: Integer RMM is the rounding of the requantization in common inference libraries, so a right shift by insn:mmul2exp[] can match them exactly.
 
 [#norm:Ztt_rm_dyn]#DYN selects the rounding mode in csr:frm[]; as in F, the behavior when csr:frm[] holds a reserved value is reserved.#
 [#norm:Ztt_rm_rod_int]#The floating-point encoding ROD is reserved when the destination datatype is an integer datatype.#
@@ -710,7 +710,7 @@ Bits 38:37 are reserved without an immediate, and bits 63:61 where the second so
 |`fn` |Operations
 |000000 to 000111 |insn:madd[], insn:msub[], insn:mmul[], insn:msmul[], insn:mmin[], insn:mmax[], insn:mneg[], insn:mabs[]
 |001000 |insn:mfma[]
-|001010, 001011 |insn:mldexp[], without and with `mod`
+|001010, 001011 |insn:mmul2exp[], without and with `mod`
 |010000 to 010010 |insn:mexp2[], insn:mrec[], insn:mrsqrt[]
 |011000 to 011101 |insn:mcmpeq[], insn:mcmpne[], insn:mcmple[], insn:mcmpgt[], insn:mcmplt[], insn:mcmpge[]
 |100000 to 100110 |insn:mand[], insn:mandnot[], insn:mor[], insn:mornot[], insn:mxor[], insn:mbsel[], insn:mrol[]
@@ -790,7 +790,7 @@ An operation is defined for certain combinations of the datatypes of its operand
 |insn:mmacc[] |<<ztt-mmacc-table>>, and <<ztt-acc64-table>> with a 64-bit accumulation extension
 |insn:mmaccn[] |FP16, BF16, TF32, or FP32 sources, and an FP32 destination
 |insn:mmaccs[] |<<ztt-mx-table>>
-|insn:madd[], insn:msub[], insn:mmul[], insn:mmax[], insn:mmin[], insn:mldexp[], insn:mredmax[], insn:mredmin[] |One datatype: an integer datatype, or a floating-point datatype other than E8M0 and TF32
+|insn:madd[], insn:msub[], insn:mmul[], insn:mmax[], insn:mmin[], insn:mmul2exp[], insn:mredmax[], insn:mredmin[] |One datatype: an integer datatype, or a floating-point datatype other than E8M0 and TF32
 |The same, with an accumulator operand |INT32, UINT32, or FP32, of those the operation supports (<<ztt-ops-acc>>)
 |insn:madd[] of a matrix-register operand to an accumulator |A source datatype that converts exactly to the destination datatype (<<ztt-exact-table>>)
 |insn:mneg[], insn:mabs[] |As insn:madd[], without the unsigned integer datatypes
@@ -989,7 +989,7 @@ An integer operation, one whose source and destination datatypes are all integer
 
 [#norm:Ztt_int_model]#Each element of its result is the exact value of the operation on the values of its operands, each read in the datatype named for it.
 Where that value is not an integer, it is rounded to one as selected by `rm` (<<ztt-rounding>>); it is then wrapped or saturated to the destination datatype as selected by `sat` (<<ztt-saturation>>).#
-Only insn:msmul[] and a right shift by insn:mldexp[] yield values that are rounded.
+Only insn:msmul[] and a right shift by insn:mmul2exp[] yield values that are rounded.
 
 No case needs a rule of its own: where an operation widens, a signed source is sign-extended and an unsigned one zero-extended, and insn:msmul[] of the most negative value by itself saturates.
 With `sat` = 0, a sum, difference, or product has the same bits for a signed and an unsigned destination datatype of one width, so INT32 and UINT32 name the same accumulation in insn:mmacc[].
@@ -1398,7 +1398,7 @@ Mixed widths fit the register model unchanged: the narrower source occupies the 
 It is an X register or a 7-bit signed immediate in the instruction.#
 [#norm:Ztt_ew_scalar]#An X register supplies the encoding of a value of _w_ bits in its low _w_ bits; _w_ > XLEN is reserved.
 An immediate is sign-extended and supplies its low _w_ bits likewise; it is reserved where the scalar operand has a floating-point datatype.#
-[#norm:Ztt_ew_scalar_ops]#On matrix registers, insn:madd[], insn:msub[], insn:mmul[], insn:mmax[], insn:mmin[], insn:msmul[], insn:mfma[], and the compares take a scalar operand as their second source, insn:mldexp[] as its exponent, and insn:mrol[] as its rotate amount; the bitwise operations take none.
+[#norm:Ztt_ew_scalar_ops]#On matrix registers, insn:madd[], insn:msub[], insn:mmul[], insn:mmax[], insn:mmin[], insn:msmul[], insn:mfma[], and the compares take a scalar operand as their second source, insn:mmul2exp[] as its exponent, and insn:mrol[] as its rotate amount; the bitwise operations take none.
 On accumulators, <<ztt-acc-ops-table>> lists the operations that take one.#
 The first source is never a scalar: insn:msub[] subtracts the scalar, and a compare has it on the right.
 In assembly, a scalar operand is an X register name or an immediate.
@@ -1446,31 +1446,31 @@ mfma    m8.fp32, m6.fp32, a0              # p(x^2)
 mmul    m8.fp32, m8.fp32, m4.fp32         # erf(x), approximated by x p(x^2)
 ----
 
-[[ztt-ops-mldexp]]
+[[ztt-ops-mmul2exp]]
 ===== Power-of-Two Scaling
 
-[#norm:Ztt_mldexp]#insn:mldexp[] (matrix load exponent) computes each element of its destination as the corresponding element of its source multiplied by 2^__e__^, where the exponent _e_ is the corresponding element of a third operand of the signed integer datatype of the source's width, or a scalar or broadcast operand.
+[#norm:Ztt_mmul2exp]#insn:mmul2exp[] computes each element of its destination as the corresponding element of its source multiplied by 2^__e__^, where the exponent _e_ is the corresponding element of a third operand of the signed integer datatype of the source's width, or a scalar or broadcast operand.
 The source and destination datatypes are equal.#
 
-[#norm:Ztt_mldexp_mod]#With the flag `mod` set, the exponent is reduced modulo the element width; `mod` is reserved for floating-point datatypes.#
+[#norm:Ztt_mmul2exp_mod]#With the flag `mod` set, the exponent is reduced modulo the element width; `mod` is reserved for floating-point datatypes.#
 
-[#norm:Ztt_mldexp_fp]#For a floating-point datatype, the result is rounded as selected by `rm` and saturated as selected by `sat`.#
-[#norm:Ztt_mldexp_int]#For an integer datatype, an exponent _e_ {ge} 0 shifts left: the result is the low bits of the shifted value, or the saturated value when `sat` is set.
+[#norm:Ztt_mmul2exp_fp]#For a floating-point datatype, the result is rounded as selected by `rm` and saturated as selected by `sat`.#
+[#norm:Ztt_mmul2exp_int]#For an integer datatype, an exponent _e_ {ge} 0 shifts left: the result is the low bits of the shifted value, or the saturated value when `sat` is set.
 An exponent _e_ < 0 shifts right by −__e__, arithmetically for a signed datatype and logically for an unsigned one, rounding the discarded bits as selected by `rm`.
 A right shift by the element width or more gives the result of shifting out all bits.#
 
-NOTE: With the integer rounding modes, a right shift by insn:mldexp[] is a plain shift for RDN and the rounding shift of the vector extension's insn:vssra.vv[] and insn:vssrl.vv[] for RNU, RNE, and ROD.
+NOTE: With the integer rounding modes, a right shift by insn:mmul2exp[] is a plain shift for RDN and the rounding shift of the vector extension's insn:vssra.vv[] and insn:vssrl.vv[] for RNU, RNE, and ROD.
 The datatype's signedness selects the arithmetic or the logical shift.
 
-[#norm:Ztt_mldexp_types]#insn:mldexp[] supports every integer datatype and every floating-point datatype except E8M0 and TF32.#
+[#norm:Ztt_mmul2exp_types]#insn:mmul2exp[] supports every integer datatype and every floating-point datatype except E8M0 and TF32.#
 
 In assembly, the flag `mod` follows `rm` and `sat`:
 
 [source,asm]
 ----
-mldexp  acc0.int32, acc0.int32, a5, rnu        # acc0 = acc0 x 2^a5, rounded
-mldexp  acc1.int32, acc1.int32, -7, rnu        # constant shift right by 7
-mldexp  m2.bf16, m2.bf16, m4.int16             # per-element scaling
+mmul2exp acc0.int32, acc0.int32, a5, rnu       # acc0 = acc0 x 2^a5, rounded
+mmul2exp acc1.int32, acc1.int32, -7, rnu       # constant shift right by 7
+mmul2exp m2.bf16, m2.bf16, m4.int16            # per-element scaling
 ----
 
 [NOTE]
@@ -1539,7 +1539,7 @@ mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon
 |Operation |Second operand |Use
 |insn:madd[] |accumulator, matrix register, broadcast |Combining results, residual add, bias
 |insn:mmul[] |accumulator, broadcast, scalar |Gating, per-channel and per-tensor scale
-|insn:msmul[], insn:mldexp[] |scalar, broadcast |Requantization, per tensor or per channel
+|insn:msmul[], insn:mmul2exp[] |scalar, broadcast |Requantization, per tensor or per channel
 |insn:mmax[], insn:mmin[] |scalar |ReLU and clamping
 |===
 
@@ -1558,7 +1558,7 @@ mmul    m10.fp32, m10.fp32, m8.fp32       # (x - mean) / sqrt(variance + epsilon
 |UINT32 |UINT32, and the unsigned integer datatypes of 16 bits or narrower
 |===
 
-[#norm:Ztt_bcast_type]#A broadcast operand has the datatype of the accumulator, or INT32 as the exponent of insn:mldexp[].#
+[#norm:Ztt_bcast_type]#A broadcast operand has the datatype of the accumulator, or INT32 as the exponent of insn:mmul2exp[].#
 [#norm:Ztt_bcast]#A broadcast operand is a vector _v_ taken from a matrix-register operand that holds a tile (<<ztt-operands>>).
 In the row form, written with the suffix `.row`, _v_ is row 0 of the tile, and element (_i_, _j_) of the result uses _v_~__j__~; in the column form, written `.col`, _v_ is column 0, and element (_i_, _j_) uses _v_~__i__~.#
 
@@ -1693,8 +1693,8 @@ After the scaling multiply, the shift and the narrowing are two instructions:
 
 [source,asm]
 ----
-mldexp  acc0.int32, acc0.int32, a5, rnu        # a5 < 0: round(acc0 x 2^a5)
-mcvt    m4[0].int8, acc0.int32, sat            # saturate to INT8
+mmul2exp acc0.int32, acc0.int32, a5, rnu       # a5 < 0: round(acc0 x 2^a5)
+mcvt     m4[0].int8, acc0.int32, sat           # saturate to INT8
 ----
 ====
 
@@ -2439,8 +2439,6 @@ include::ztt-insns/mexp2.adoc[]
 
 include::ztt-insns/mfill.adoc[]
 
-include::ztt-insns/mldexp.adoc[]
-
 include::ztt-insns/mls-st.adoc[]
 
 include::ztt-insns/mls-tst.adoc[]
@@ -2452,6 +2450,8 @@ include::ztt-insns/mmaccn.adoc[]
 include::ztt-insns/mmax.adoc[]
 
 include::ztt-insns/mmul.adoc[]
+
+include::ztt-insns/mmul2exp.adoc[]
 
 include::ztt-insns/mmv-m-x.adoc[]
 

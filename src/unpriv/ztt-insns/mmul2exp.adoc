@@ -1,18 +1,18 @@
 <<<
-[#insns-mldexp,reftext="Matrix Elementwise Scale by Power of Two"]
-==== insn:mldexp[]
+[#insns-mmul2exp,reftext="Matrix Elementwise Multiply by Power of Two"]
+==== insn:mmul2exp[]
 
 Synopsis::
 Elementwise multiply by a power of two
 
 Mnemonic::
-insn:mldexp[_md_._td_, _ms1_._t1_, _ms2_._t2_[, _rm_\][, sat\][, mod\]] +
-insn:mldexp[_md_._td_, _ms1_._t1_, _rs2_[, _rm_\][, sat\][, mod\]] +
-insn:mldexp[_md_._td_, _ms1_._t1_, _imm_[, _rm_\][, sat\][, mod\]] +
-insn:mldexp[_accd_._td_, _accs_._t1_, _rs2_[, _rm_\][, sat\][, mod\]] +
-insn:mldexp[_accd_._td_, _accs_._t1_, _imm_[, _rm_\][, sat\][, mod\]] +
-insn:mldexp.row[_accd_._td_, _accs_._t1_, _ms2_``x2``._t2_[, _rm_\][, sat\][, mod\]] +
-insn:mldexp.col[_accd_._td_, _accs_._t1_, _ms2_``x2``._t2_[, _rm_\][, sat\][, mod\]]
+insn:mmul2exp[_md_._td_, _ms1_._t1_, _ms2_._t2_[, _rm_\][, sat\][, mod\]] +
+insn:mmul2exp[_md_._td_, _ms1_._t1_, _rs2_[, _rm_\][, sat\][, mod\]] +
+insn:mmul2exp[_md_._td_, _ms1_._t1_, _imm_[, _rm_\][, sat\][, mod\]] +
+insn:mmul2exp[_accd_._td_, _accs_._t1_, _rs2_[, _rm_\][, sat\][, mod\]] +
+insn:mmul2exp[_accd_._td_, _accs_._t1_, _imm_[, _rm_\][, sat\][, mod\]] +
+insn:mmul2exp.row[_accd_._td_, _accs_._t1_, _ms2_``x2``._t2_[, _rm_\][, sat\][, mod\]] +
+insn:mmul2exp.col[_accd_._td_, _accs_._t1_, _ms2_``x2``._t2_[, _rm_\][, sat\][, mod\]]
 
 Encoding::
 [wavedrom, , svg]
@@ -26,7 +26,7 @@ Encoding::
     { bits: 5, name: 'ms2/rs2/imm[4:0]' },
     { bits: 1, name: 'a' },
     { bits: 1, name: 'mod' },
-    { bits: 5, name: '00101', attr: ['MLDEXP'] },
+    { bits: 5, name: '00101', attr: ['MMUL2EXP'] },
     { bits: 2, name: '11', attr: ['Zl'] },
     { bits: 3, name: 'zlmaj' },
     { bits: 2, name: 'imm[6:5]' },
@@ -66,27 +66,27 @@ Arguments::
 |===
 
 Description::
-[#norm:mldexp_op]#insn:mldexp[] writes _x_ {times} 2^__e__^ to each element of the destination, for the corresponding element _x_ of the first source and the exponent _e_ that the second source supplies for it (<<ztt-ops-mldexp>>).
+[#norm:mmul2exp_op]#insn:mmul2exp[] writes _x_ {times} 2^__e__^ to each element of the destination, for the corresponding element _x_ of the first source and the exponent _e_ that the second source supplies for it (<<ztt-ops-mmul2exp>>).
 A scalar operand supplies _e_ for every element (<<ztt-ops-elementwise>>), and a broadcast operand for every element of a column or of a row (<<ztt-ops-acc>>).#
 +
-[#norm:mldexp_types]#The first source and the destination have one datatype.
+[#norm:mmul2exp_types]#The first source and the destination have one datatype.
 On matrix registers, each an _N_ {times} RLEN/__w__ matrix, it is an integer datatype or a floating-point datatype other than E8M0 and TF32; on accumulator registers, it is INT32, UINT32, or FP32.
 The exponent has the signed integer datatype of the same element width, which _t2_ names in every form.#
 +
-[#norm:mldexp_fp]#A floating-point result is rounded as selected by `rm` and saturated as selected by `sat`, and the floating-point exception flags accrue in csr:fflags[].#
+[#norm:mmul2exp_fp]#A floating-point result is rounded as selected by `rm` and saturated as selected by `sat`, and the floating-point exception flags accrue in csr:fflags[].#
 +
-[#norm:mldexp_int]#For an integer datatype, an exponent _e_ {ge} 0 shifts left, and the result wraps or saturates as selected by `sat`.
+[#norm:mmul2exp_int]#For an integer datatype, an exponent _e_ {ge} 0 shifts left, and the result wraps or saturates as selected by `sat`.
 An exponent _e_ < 0 shifts right by −__e__, arithmetically for a signed datatype and logically for an unsigned one, and rounds the discarded bits as selected by `rm`.#
 +
-[#norm:mldexp_mod]#With `mod` set, the exponent is reduced modulo the element width.#
+[#norm:mmul2exp_mod]#With `mod` set, the exponent is reduced modulo the element width.#
 
 Exceptions::
-[#norm:mldexp_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
+[#norm:mmul2exp_illegal]#_Illegal Instruction_ is raised if any of the following conditions holds:#
 +
 * csr:mstatus[ts] is Off, or V=1 and csr:vsstatus[ts] is Off.
 * _td_ is a floating-point datatype, and ext:f[] is not implemented, or csr:mstatus[fs] is Off, or V=1 and csr:vsstatus[fs] is Off.
 * _td_ is FP64 and ext:d[] is not implemented.
-* _td_ and _t1_ are not one datatype that insn:mldexp[] supports for its operands, or a type code is reserved.
+* _td_ and _t1_ are not one datatype that insn:mmul2exp[] supports for its operands, or a type code is reserved.
 * _t2_ is not the signed integer datatype of the element width of _td_.
 * `mod` is set and _td_ is a floating-point datatype.
 * `form` is not listed for `a`.
@@ -100,11 +100,11 @@ Exceptions::
 Operation::
 [source,sail]
 --
-mapping clause encdec64 = MLDEXP(mod, a, md, ms1, f2, td, rm, sat, t1, t2, form, s2, ih)
+mapping clause encdec64 = MMUL2EXP(mod, a, md, ms1, f2, td, rm, sat, t1, t2, form, s2, ih)
   <-> s2 @ form @ t2 @ t1 @ sat @ rm @ td @ ih @ ZTT_ZLMAJ @ 0b11
     @ 0b00101 @ mod @ a @ f2 @ ms1 @ 0b100 @ md @ ZTT_ZLOP @ 0b11111
 
-function clause execute MLDEXP(mod, a, md, ms1, f2, td, rm, sat, t1, t2, form, s2, ih) = {
+function clause execute MMUL2EXP(mod, a, md, ms1, f2, td, rm, sat, t1, t2, form, s2, ih) = {
   if not(ztt_enabled()) then return Illegal_Instruction();
   /* A floating-point datatype needs F, D for FP64, and FS. */
   if not(ztt_fp_enabled(td)) then return Illegal_Instruction();
@@ -115,7 +115,7 @@ function clause execute MLDEXP(mod, a, md, ms1, f2, td, rm, sat, t1, t2, form, s
   let w = ztt_type_width(td);
   if t2 != ztt_signed_type(w) then return Illegal_Instruction();
   if mod == 0b1 & not(ztt_is_int(td)) then return Illegal_Instruction();
-  if not(mldexp_form(a, form)) then return Illegal_Instruction();
+  if not(mmul2exp_form(a, form)) then return Illegal_Instruction();
   /* An operand is one matrix register or, with a set, an accumulator register;
      ztt_ew_operand returns None() for an accumulator operand without Zttc and for
      an accumulator register number of R or more.  f2 and ih hold the second source;
@@ -144,7 +144,7 @@ function clause execute MLDEXP(mod, a, md, ms1, f2, td, rm, sat, t1, t2, form, s
       let k  : int = if mod == 0b1 then e0 % w else e0;   /* 0 to w - 1 with mod */
       /* x * 2^k: for an integer datatype a left shift, or a right shift by -k that
          rounds the discarded bits. */
-      let (e, f) = ztt_ldexp(td, ztt_element(x, r, c), k, the(rmd), sat);
+      let (e, f) = ztt_mul2exp(td, ztt_element(x, r, c), k, the(rmd), sat);
       ztt_write_element(the(dst), r, c, e);
       flags = flags | f;
     }
@@ -154,7 +154,7 @@ function clause execute MLDEXP(mod, a, md, ms1, f2, td, rm, sat, t1, t2, form, s
   RETIRE_SUCCESS
 }
 
-function mldexp_form(a : bits(1), form : bits(3)) -> bool =
+function mmul2exp_form(a : bits(1), form : bits(3)) -> bool =
   match (a, form) {
     (0b0, 0b000) => true,    /* matrix register */
     (_,   0b001) => true,    /* X register */
