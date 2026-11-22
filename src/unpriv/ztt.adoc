@@ -31,7 +31,7 @@ ext:zttg[] combines two or four matrix registers into one operand, so that an _N
 ext:zttn[] adds the matrix multiply that reads its second source by columns, and ext:ztt[] comprises them all.
 
 [[ztt-ext-figure]]
-.The extensions of the Ztt family and their operands. An arrow points to the extension that depends on its origin. Registers are drawn by rows and columns, a matrix register with 16-bit elements.
+.The extensions of the Ztt family and their operands. An arrow points to the extension that depends on its origin; ext:zttn[] is drawn for its single-register forms (_G_ = 1), which depend on ext:zttc[], and its register-group forms (_G_ > 1), which also depend on ext:zttg[]. Registers are drawn by rows and columns, a matrix register with 16-bit elements.
 image::ztt-extensions.svg[align="center",scaledwidth=90%]
 
 [#norm:Ztt_ext_model]#Every extension of <<ztt-ext-table>> has the registers, the CSRs, and the context status of the programmer's model (<<ztt-model>>).#
