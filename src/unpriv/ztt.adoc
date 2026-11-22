@@ -27,7 +27,7 @@ Like VLEN, they scale loop bounds and strides, but not register numbers or data 
 The extensions of the family build on one another, as the embedded vector extensions build up to V: a smaller matrix unit implements fewer forms, and its software runs on a larger one (<<ztt-ext-figure>>).
 ext:ztte[] is for the smallest units: each operand is one matrix register, whose rows may be shorter than those of the other extensions.
 ext:zttc[] fixes the row length, so that a matrix register holds an _N_ {times} _N_ matrix of 16-bit elements, and operates on accumulators in place.
-ext:zttg[] combines two or four matrix registers into one operand, for a longer inner dimension and for wider elements.
+ext:zttg[] combines two or four matrix registers into one operand, so that an _N_ {times} _N_ matrix of 32-bit or 64-bit elements is one operand; groups also lengthen the inner dimension of a matrix multiply.
 ext:zttn[] adds the matrix multiply that reads its second source by columns, and ext:ztt[] comprises them all.
 
 [[ztt-ext-figure]]
@@ -87,7 +87,7 @@ A matrix register then holds an _N_ {times} _N_ matrix of 16-bit elements and a 
 [#norm:Ztt_ext_g]#ext:zttg[] depends on ext:zttc[] and adds the forms in which an operand occupies a group of two or four matrix registers (<<ztt-groups>>).#
 These are:
 
-* matrix multiplies with two and four times the _K_ of ext:zttc[], and those with TF32 and FP32 sources;
+* matrix multiplies with TF32 and FP32 sources, and those with two and four times the _K_ of ext:zttc[];
 * loads and stores of register groups;
 * conversions, operations with an accumulator operand, and index matrices whose matrix-register operand occupies a group.
 
