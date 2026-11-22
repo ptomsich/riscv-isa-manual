@@ -957,7 +957,7 @@ In summary, a Ztt instruction raises an illegal-instruction exception if:
 * it names a reserved type code, or a datatype combination that its operation does not support;
 * a field holds a reserved value, or a field that the instruction does not use is not zero (<<ztt-specifiers>>, <<ztt-encoding-64>>);
 * the alignment of a register group or an accumulator pair, or the number of registers of an operand, is not valid (<<ztt-groups>>, <<ztt-acc-layout>>, <<ztt-enc-columns>>);
-* a slot, part, or scale-row index is out of range for _N_ and RLEN (<<ztt-ops-mcvt>>, <<ztt-ops-mmaccs>>);
+* a slot or scale-row index is out of range (<<ztt-ops-mcvt>>, <<ztt-ops-mmaccs>>);
 * an X register supplies or receives an element wider than XLEN (<<ztt-ops-elementwise>>, <<ztt-ops-mmvxm>>, <<ztt-ops-const>>).
 
 The behavior of DYN while csr:frm[] holds a reserved value is not an encoding, and is reserved as in F (<<ztt-rounding>>).
@@ -1649,7 +1649,8 @@ An accumulator operand designates an accumulator register, or an accumulator pai
 A register has 16__N__/RLEN parts; with RLEN = 16__N__, the only part is the whole register.
 A conversion between two accumulator registers converts all _N_ columns.#
 [#norm:Ztt_mcvt_slot]#The slot index _s_ and the part index _t_ are encoded in the index field of their operand (<<ztt-encoding-64>>).
-A slot index of 16/__w__ or more, a part index of 16__N__/RLEN or more, or a nonzero index for any other operand, raises an illegal-instruction exception.#
+A slot index of 16/__w__ or more, or a nonzero index for any other operand, raises an illegal-instruction exception.#
+[#norm:Ztt_mcvt_part_range]#The behavior of a conversion whose part index is 16__N__/RLEN or more is UNSPECIFIED.#
 [#norm:Ztt_mcvt_merge]#Writing a slot or a part leaves the rest of the register unchanged.#
 [#norm:Ztt_mcvt_overlap]#The source is read in full before the destination is written, so the two may overlap.#
 
