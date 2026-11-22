@@ -503,6 +503,7 @@ NOTE: Matrices written into the slots of a register lie side by side in the oper
 
 [#norm:Ztt_group]#An operand may occupy a group of _G_ = 2 or 4 consecutive matrix registers, the first of which has a register number that is a multiple of _G_.
 Register _j_ of the group holds columns _j_{nbsp}{times}{nbsp}RLEN/__w__ to (__j__ + 1){nbsp}{times}{nbsp}RLEN/__w__ − 1, so the operand is an _N_ {times} _G_{nbsp}{times}{nbsp}RLEN/__w__ matrix.#
+An operand of one register has _G_ = 1.
 [#norm:Ztt_group_size]#An operand of RLEN/16 columns and element width _w_ > 16 occupies _G_ = _w_/16 registers.
 An operand of 16 bits or narrower occupies a group where it holds more columns than one register does (<<ztt-g-table>>).
 Elementwise operations on matrix registers take no groups (<<ztt-ops-elementwise>>).
