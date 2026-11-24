@@ -1771,6 +1771,11 @@ The part indices, slot indices, and destination registers of a conversion are fi
 The sequence for RLEN = 16__N__ is the one that executes on ext:zttc[].
 A result that goes to memory needs no such sequence: a conversion between accumulator registers and an accumulator store do not depend on the ratio.
 
+NOTE: The extensions above ext:ztte[] add shorter sequences, not results that ext:ztte[] cannot compute.
+insn:mmaccn[] is insn:mmacc[] on a second source loaded by a transposing load, and an operation on accumulators is an accumulator store, the operation on matrix registers, and an accumulator load.
+Software can thus have one code path for ext:ztte[] and select faster ones by the extensions that an implementation reports.
+The extensions are separate because a column read of a source and access to the accumulators from the elementwise datapath are costly in a small matrix unit; which extension an execution environment provides is for a profile to state.
+
 Software that executes on several implementations computes the same results on each, except for floating-point matrix multiplies, whose roundings depend on RLEN and on implementation-defined parameters (<<ztt-matmul-numerics>>), and for insn:mexp2[], insn:mrec[], and insn:mrsqrt[], whose inexact results are implementation-defined (<<ztt-ops-mexp2>>).
 
 [[ztt-cc]]
