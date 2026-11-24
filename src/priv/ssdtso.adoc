@@ -218,9 +218,7 @@ Operating systems may follow various implementation strategies to enable dynamic
 
 [NOTE]
 ====
-This specification supports on-demand switching of individual harts into dynamic-TSO mode, but does not prescribe a specific strategy for how the operating system handles the presence of processes requiring RVTSO semantics.
-
-An operating system is nonetheless expected to minimize the overall time that cores spend in dynamic-TSO mode.
+This specification does not prescribe which of these strategies an operating system uses; that choice is left to the operating system.
 ====
 
 [[ssdtso-configurations-for-dynamic-tso]]
@@ -262,8 +260,8 @@ As a result, no thread of such a process is ever executed under RVWMO semantics,
 (Establishing that designation for an already-running, multi-threaded process is a distinct operation, governed by the <<req-rendezvous>>.)
 
 . [[req-capable,capable-hart confinement requirement]]*Designated software must execute only on Ssdtso-capable harts.*
-On a system where not every hart implements Ssdtso, the operating system must confine designated software to harts on which the mode can be established, and must treat this confinement as mandatory — taking precedence over user-controlled placement inputs such as inherited CPU affinity — or refuse the designation where it cannot be satisfied.
-Establishing the mode is a precondition of executing the software (see the <<req-establish>>); a hart that cannot establish the mode can never satisfy that precondition.
+On a system where not every hart implements Ssdtso, the operating system must execute designated software only on harts that implement Ssdtso, or must decline the designation when it cannot guarantee this.
+Establishing the mode is a precondition of executing the software (see the <<req-establish>>); a hart that does not implement Ssdtso can never satisfy that precondition.
 
 . [[req-remote,remote-establishment requirement]]*Establishing the mode on a remote hart requires cross-hart synchronization.*
 When the mode of a hart other than the one performing the change is altered (for example, when enabling dynamic-TSO system-wide, or when preparing a hart to receive a migrated thread), the operating system must ensure — through an inter-processor interrupt and acknowledgement, or through the release/acquire handoff of a run-queue lock — that the target hart has reached the intended mode before the dependent process is executed on it.
@@ -276,7 +274,7 @@ The release/acquire handoff already provided by run-queue locking (release on th
 . [[req-maintain,mode-maintenance requirement]]*The mode, once granted, must be maintained.*
 For software designated as requiring RVTSO, the effective dynamic-TSO state must be maintained for every instruction of that software, on every hart that executes it, until the software exits or itself requests a transition (which is then governed by the <<req-rendezvous>>).
 The controlling software must not withdraw the mode on its own initiative — for example, because a system-wide enablement policy lapses — while designated software still runs: the designated code's ordering was established at compile time, and it can neither detect nor tolerate even a transient weakening.
-Conversely, only software that holds the designation may rely on dynamic-TSO semantics (see the note in <<ssdtso-discovery>>).
+Conversely, only software that holds the designation may rely on dynamic-TSO semantics (see <<ssdtso-discovery>>).
 
 . [[req-exit,exit requirement]]*Exiting dynamic-TSO mode never harms other RVWMO participants.*
 Because the behaviours permitted under RVTSO are a subset of those permitted under RVWMO, returning a hart from dynamic-TSO to RVWMO cannot invalidate any _other_, correctly-synchronized RVWMO observer elsewhere in the system, and memory accesses already performed under RVTSO retain their stronger ordering.
@@ -287,29 +285,15 @@ This property concerns only the rest of the system; coordinating an exit _among 
 A process that is not yet multi-threaded may enter or leave dynamic-TSO mode freely: no synchronization and no fence are required, because the transitioning hart observes its own prior accesses regardless of their annotation and no other hart is observing the process's memory.
 A process that is already multi-threaded must, when transitioning in either direction, bring all of its threads to a common point (a rendezvous), establish the target mode on every hart executing one of its threads, and ensure that memory written under the old mode is ordered before any thread resumes under the new mode.
 A correctly-constructed rendezvous — for example, the operating system pausing the sibling harts via inter-processor interrupts and acknowledgement, setting `DTSO`, and then resuming — provides both the required cross-hart establishment of the mode and the ordering of prior memory accesses; no additional `FENCE` is then necessary.
-Because this rendezvous is comparatively expensive, a process that will require dynamic-TSO should enter it before becoming multi-threaded (see <<runtime_linker_support>>), reducing the transition to the fence-free single-threaded case.
-
-[[ssdtso-impact-on-thread-task-state]]
-===== Impact on thread/task state
-
-For operating systems that use on-demand switching of individual harts, each thread/task structure needs an additional field recording whether the thread must execute in dynamic-TSO mode.
+Establishing the mode before the first thread runs avoids a transition of running threads.
 
 [[runtime_linker_support]]
 ===== Runtime linker support
 
-Support for shared objects requires runtime-linker support, which roughly follows this process:
+A runtime linker that loads an object requiring RVTSO relies on two things the hardware and the surrounding environment provide: discovery that the hart implements the `DTSO` controls (see <<ssdtso-discovery>>), and a mechanism to request a grant of dynamic-TSO for the process.
+How support is discovered, and how a grant is requested, are defined by the operating system and the platform ABI (for example, `riscv_hwprobe` and a `prctl` call on Linux), not by this specification.
 
-* The capability to support Ssdtso is detected via an OS-specific discovery method (e.g., `riscv_hwprobe` with `RISCV_HWPROBE_EXT_SSDTSO` key on Linux).
-* The ELF flags on each resolved shared object are evaluated to determine if RVTSO is required. If RVTSO is required but neither Ztso nor Ssdtso is available, the runtime linker is expected to invoke appropriate error handling and reporting.
-* If a shared object that requires RVTSO is loaded into the process and Ssdtso is implemented, the runtime linker signals the OS to enter dynamic-TSO mode via an OS-specific interface (e.g., on Linux: using a `prctl(...)` call).
-
-[NOTE]
-====
-It is recommended to only signal the need to enter dynamic-TSO mode once per process, to reduce the number of system calls, for performance.
-Given that entering dynamic-TSO is idempotent, no requirement exists to signal it more than once.
-
-Beyond the performance consideration, entering dynamic-TSO mode early — before the process becomes multi-threaded — avoids the need to synchronize the transition across the process's threads; see the requirements in <<entering_and_exiting>>.
-====
+If a loaded object requires RVTSO and the hart implements neither Ztso nor Ssdtso, the required ordering cannot be provided; detecting and reporting that condition is a function of the runtime environment.
 
 [[ssdtso-compatibility-with-rvwmo-binaries-and-libraries]]
 ===== Compatibility with RVWMO binaries and libraries
@@ -327,17 +311,11 @@ The same argument covers memory shared between a dynamic-TSO process and an RVWM
 ===== Discovery
 
 The presence of the Ssdtso extension is discovered through the same mechanism as other RISC-V ISA extensions (for example, the platform's hardware-description structures).
-Operating systems may expose its availability to lower privilege levels through an OS-specific interface (e.g., `riscv_hwprobe` with a corresponding key on Linux).
 
-[NOTE]
-====
-What is exposed to less-privileged software should be the designation itself — "this process (or guest) has been granted dynamic-TSO" — and remain distinct from Ztso.
-An operating system should not advertise TSO semantics to software it has not designated, and language runtimes should not condition their code generation on the system incidentally operating in TSO: a mode that was never granted may be withdrawn at any time by a policy change at the higher privilege level.
+Ssdtso support indicates that the hart implements the `DTSO` controls.
+Software that requires RVTSO ordering can rely on dynamic-TSO for the execution covered by its grant.
 
-The exception is nested virtualization: an operating system that itself executes under dynamic-TSO — because the hypervisor's `henvcfg.DTSO` (or `menvcfg.DTSO`) places both its VS and VU levels in dynamic-TSO — observes an architecturally TSO machine for all of its execution.
-Such a guest may legitimately claim TSO towards its own user space (for example, by advertising Ztso in its guest ISA description), provided the hypervisor maintains the grant for the lifetime of the guest.
-The same applies to a non-virtualized operating system whose S/HS and U levels are placed in dynamic-TSO by `menvcfg.DTSO`.
-====
+A guest whose VS and VU levels are placed in dynamic-TSO by the hypervisor's `henvcfg.DTSO` (or `menvcfg.DTSO`) observes RVTSO ordering for all execution at those levels for as long as the hypervisor maintains that grant.
 
 [[security_considerations]]
 ==== Security considerations (informative)
@@ -352,23 +330,21 @@ Software compiled for RVTSO has its ordering established at compile time; execut
 An attacker who controls a `DTSO` bit that governs a victim can induce such races deliberately — a memory-model downgrade, turning the victim's correct lock-free code into exploitable race conditions (for example, time-of-check/time-of-use windows on lock-free data structures).
 
 Within a single operating system this adds no new capability: the software controlling a `DTSO` bit is strictly more privileged than the software the bit governs and already controls that software's execution entirely.
-The boundary of concern is deployments in which the more-privileged level is not trusted by the less-privileged one, most prominently confidential computing: a confidential guest that requires — or has been told it may rely on — RVTSO is exposed to an untrusted hypervisor silently clearing the grant.
-In such architectures, the `DTSO` state governing a confidential workload must be part of the workload's trusted, attested configuration — established and locked through the TEE security manager rather than by the untrusted host — and a withdrawal of the mode while the workload runs must be treated as a security violation, not as a policy change.
-This is the security restatement of the <<req-maintain>>.
+The boundary of concern is deployments in which the more-privileged level is not trusted by the less-privileged one, most prominently confidential computing: a confidential guest that relies on RVTSO is exposed to an untrusted hypervisor clearing its grant.
+Software that requires RVTSO relies on its grant being maintained for as long as it executes (<<req-maintain>>); where the level that controls the `DTSO` bit lies outside the trust boundary of that software, providing and attesting that guarantee is defined by the confidential-computing architecture, not by this specification.
 
 [[ssdtso-placement-on-capable-harts]]
 ===== Placement on capable harts
 
-On a system where not all harts implement Ssdtso, placement is security-relevant: user-controlled scheduling inputs — such as CPU affinity inherited across `execve` — must not be able to force designated software onto a hart where the mode cannot be established.
-The exposure is sharpest where the designated software is more privileged than the attacker, as for a setuid binary requiring RVTSO: induced races then occur in a victim at a higher privilege, not in the attacker's own process.
-The <<req-capable>> must therefore take precedence over user-controlled placement, and the designation must be refused where it cannot be satisfied.
+On a system where not all harts implement Ssdtso, placement is security-relevant: if less-privileged software can influence where designated software runs — for example, through CPU affinity inherited across `execve` — it could cause that software to execute on a hart that cannot establish the mode.
+The exposure is sharpest where the designated software is more privileged than the attacker, as for a setuid binary requiring RVTSO: the induced races then occur in a victim at a higher privilege, not in the attacker's own process.
+Executing designated software only on harts that implement Ssdtso (<<req-capable>>) bounds this exposure.
 
 [[ssdtso-availability]]
 ===== Availability
 
-A policy that enables dynamic-TSO system-wide upon the appearance of any RVTSO process hands unprivileged software a system-wide performance lever: any user able to start a trivial RVTSO-flagged binary degrades every hart for all co-located workloads.
-Similarly, the rendezvous of the <<req-rendezvous>> is an all-hart interrupt-and-acknowledge operation; where unprivileged software can trigger it repeatedly, it becomes an amplification primitive.
-Operating systems should privilege-gate, rate-limit, or account for system-wide enablement and transition rendezvous, and should prefer the per-process or per-thread configurations, whose cost is confined to the harts actually executing designated software.
+If the software that controls a `DTSO` bit enables dynamic-TSO on harts in response to less-privileged software — for example, a configuration that enables it system-wide whenever an RVTSO process is present — then that less-privileged software can change the mode of harts running unrelated work, and can cause the all-hart rendezvous of the <<req-rendezvous>> to run repeatedly.
+In the per-process and per-thread configurations the effect of a grant is confined to the harts that execute the designated software.
 
 [[ssdtso-side-channels]]
 ===== Side channels
@@ -376,8 +352,8 @@ Operating systems should privilege-gate, rate-limit, or account for system-wide 
 The effective dynamic-TSO state is hart-global execution state and is therefore, like other mode state, a potential covert or side channel between contexts that time-share a hart:
 
 * Whether the hart enforces TSO ordering influences the timing of memory-ordering-sensitive code, so a context may be able to infer — or, given control over a `DTSO` bit, modulate — the mode experienced by another context on the same hart.
-* Residual mode must not leak from one context into the next: an operating system should establish the incoming context's designated `DTSO` value as part of every context switch (the per-process configuration in <<ssdtso-configurations-for-dynamic-tso>> does this by construction), which both removes ordering ambiguity and denies a mode-based covert channel its persistence across switches.
-* The timing difference between the two operating modes is not, in general, removable; the mode of a context should therefore not itself be treated as a secret.
+* The `DTSO` controls are hart-global and persist until written, so a context's mode persists across a context switch unless the controlling software re-establishes the incoming context's mode; the per-process configuration (<<ssdtso-configurations-for-dynamic-tso>>) re-establishes it by construction.
+* The timing of memory-ordering-sensitive code differs between the two modes; software cannot rely on its own mode being unobservable to other contexts that time-share the hart.
 
 [[ssdtso-transient-execution]]
 ===== Transient execution
